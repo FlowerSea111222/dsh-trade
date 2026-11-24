@@ -1,0 +1,165 @@
+/* ReportsPanel —— 右列第三栏「盯盘报告」：上方索引 + 下方正文预览。 */
+
+.panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  background: var(--dsw-futu-bg-base, #fff);
+  border-left: 1px solid var(--dsw-futu-border-default, #e3e6ea);
+  z-index: 45;
+  overflow: hidden;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--dsw-futu-border-default, #e3e6ea);
+  flex: none;
+}
+
+.title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dsw-futu-text-primary, #1a1e24);
+}
+
+.spacer {
+  flex: 1;
+}
+
+.closeBtn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--dsw-futu-text-secondary, #5f6672);
+  font-size: 16px;
+  line-height: 1;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.closeBtn:hover {
+  background: var(--dsw-futu-bg-surface-active, rgba(0, 0, 0, 0.08));
+}
+
+.list {
+  flex: 0 0 auto;
+  max-height: 34%;
+  overflow-y: auto;
+  padding: 6px;
+  border-bottom: 1px solid var(--dsw-futu-border-default, #e3e6ea);
+}
+
+.row {
+  appearance: none;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-futu-text-primary, #1a1e24);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.row:hover {
+  background: var(--dsw-futu-bg-surface-hover, rgba(0, 0, 0, 0.04));
+}
+
+.row[data-active='true'] {
+  background: var(--dsw-futu-bg-surface-active, rgba(0, 0, 0, 0.08));
+}
+
+.name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  color: var(--dsw-futu-text-tertiary, #8a919c);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.size {
+  min-width: 46px;
+  text-align: right;
+}
+
+.previewHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  flex: none;
+  border-bottom: 1px solid var(--dsw-futu-border-default, #e3e6ea);
+}
+
+.previewName {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dsw-futu-text-primary, #1a1e24);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.backBtn {
+  appearance: none;
+  border: 1px solid var(--dsw-futu-border-default, #e3e6ea);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-futu-text-secondary, #5f6672);
+  font-size: 11px;
+  line-height: 1;
+  padding: 5px 8px;
+  cursor: pointer;
+}
+
+.backBtn:hover {
+  background: var(--dsw-futu-bg-surface-hover, rgba(0, 0, 0, 0.04));
+  color: var(--dsw-futu-text-primary, #1a1e24);
+}
+
+.body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px 12px 16px;
+}
+
+.text {
+  margin: 0;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--dsw-futu-text-primary, #1a1e24);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.hint {
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--dsw-futu-text-tertiary, #8a919c);
+}

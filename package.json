@@ -1,0 +1,73 @@
+{
+  "name": "dsh-trading-panel",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "交易工作台面板：把 dsh-trading 三栏交易界面做成 DSH 客户端左侧导航行 + 全页面板",
+  "main": "lib/index.mjs",
+  "exports": {
+    ".": {
+      "default": "./lib/index.mjs"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-api-session-controller",
+        "@deepseek-ai/dsh-client-ui-workspace"
+      ]
+    }
+  },
+  "scripts": {
+    "build": "tsdown && tsdown --config tsdown.client.config.mjs",
+    "deploy": "node scripts/deploy.mjs"
+  },
+  "dependencies": {
+    "@dshtrading/api": "0.7.1",
+    "@dshtrading/base": "0.7.1",
+    "@dshtrading/bot-api": "0.7.1",
+    "@dshtrading/cn": "0.7.1",
+    "@dshtrading/crypto": "0.7.1",
+    "@dshtrading/futures": "0.7.1",
+    "@dshtrading/global": "0.7.1",
+    "@dshtrading/gui": "0.7.1",
+    "@dshtrading/hk": "0.7.1",
+    "@dshtrading/holdings": "0.7.1",
+    "@dshtrading/indicators": "0.7.1",
+    "@dshtrading/knowledge": "0.7.1",
+    "@dshtrading/router": "0.7.1",
+    "@dshtrading/strategies": "0.7.1",
+    "@dshtrading/us": "0.7.1",
+    "@dshtrading/watchlist": "0.7.1",
+    "lightweight-charts": "^5.2.1",
+    "undici": "^8.13.1"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=4.1.0",
+    "react": "^18.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "~18.3.1",
+    "@types/react-dom": "~18.3.7",
+    "lightningcss": "^1.33.0",
+    "react": "^18.2.0",
+    "react-dom": "18.3.1",
+    "tsdown": "^0.22.0",
+    "typescript": "^5.9.0"
+  }
+}

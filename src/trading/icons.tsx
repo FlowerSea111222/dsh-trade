@@ -1,0 +1,271 @@
+/**
+ * 内联矢量图标：与宿主 outline 风格及富途牛牛紧凑图标保持一致。
+ */
+import type { ReactElement } from 'react'
+
+/** 定时任务入口（时钟）。 */
+export function IconClock({ size = 16 }: { size?: number }): ReactElement {
+  return (
+    <svg viewBox="0 0 16 16" width={size} height={size} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="8" cy="8" r="6.25" />
+      <path d="M8 4.75V8l2.4 1.6" />
+    </svg>
+  )
+}
+
+export function IconNewSession({ size = 16 }: { size?: number }): ReactElement {
+  return (
+    <svg viewBox="0 0 16 16" width={size} height={size} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="8" cy="8" r="6.25" />
+      <path d="M8 5.4v5.2M5.4 8h5.2" />
+    </svg>
+  )
+}
+
+export function IconSettings({ size = 16 }: { size?: number }): ReactElement {
+  return (
+    <svg viewBox="0 0 16 16" width={size} height={size} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M8.15 1.33h-0.29a1.33 1.33 0 0 0-1.33 1.33v0.12a1.33 1.33 0 0 1-0.67 1.15l-0.29 0.17a1.33 1.33 0 0 1-1.33 0l-0.1-0.05a1.33 1.33 0 0 0-1.82 0.49l-0.15 0.25a1.33 1.33 0 0 0 0.49 1.82l0.1 0.07a1.33 1.33 0 0 1 0.67 1.15v0.34a1.33 1.33 0 0 1-0.67 1.16l-0.1 0.06a1.33 1.33 0 0 0-0.49 1.82l0.15 0.25a1.33 1.33 0 0 0 1.82 0.49l0.1-0.05a1.33 1.33 0 0 1 1.33 0l0.29 0.17a1.33 1.33 0 0 1 0.67 1.15V13.33a1.33 1.33 0 0 0 1.33 1.33h0.29a1.33 1.33 0 0 0 1.33-1.33v-0.12a1.33 1.33 0 0 1 0.67-1.15l0.29-0.17a1.33 1.33 0 0 1 1.33 0l0.1 0.05a1.33 1.33 0 0 0 1.82-0.49l0.15-0.26a1.33 1.33 0 0 0-0.49-1.82l-0.1-0.05a1.33 1.33 0 0 1-0.67-1.16v-0.33a1.33 1.33 0 0 1 0.67-1.16l0.1-0.06a1.33 1.33 0 0 0 0.49-1.82l-0.15-0.25a1.33 1.33 0 0 0-1.82-0.49l-0.1 0.05a1.33 1.33 0 0 1-1.33 0l-0.29-0.17a1.33 1.33 0 0 1-0.67-1.15V2.67a1.33 1.33 0 0 0-1.33-1.33z" />
+      <circle cx="8" cy="8" r="2" />
+    </svg>
+  )
+}
+
+/** 软件更新入口（循环箭头）。 */
+export function IconUpdate({ size = 16 }: { size?: number }): ReactElement {
+  return (
+    <svg viewBox="0 0 16 16" width={size} height={size} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M13.25 8A5.25 5.25 0 1 1 8 2.75c1.63 0 3.08.74 4.04 1.9" />
+      <path d="M13.5 2.5v3.5h-3.5" />
+    </svg>
+  )
+}
+
+/** 面板折叠/展开（左栏 panel 图标）。 */
+export function IconFoldPanel({ size = 16 }: { size?: number }): ReactElement {
+  return (
+    <svg viewBox="0 0 16 16" width={size} height={size} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="2.75" width="12" height="10.5" rx="2" />
+      <path d="M6.25 2.75v10.5" />
+      <path d="M10.75 6.25 9 8l1.75 1.75" />
+    </svg>
+  )
+}
+
+/** 技术指标入口（坐标轴 + 折线）。 */
+export function IconIndicators({ size = 16 }: { size?: number }): ReactElement {
+  return (
+    <svg viewBox="0 0 16 16" width={size} height={size} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2.75 2.75v10.5h10.5" />
+      <path d="M5.25 9.5 7.5 6.75l2.25 1.75 2.75-3.5" />
+    </svg>
+  )
+}
+
+/** 自选列表图标（富途左栏图标）。 */
+export function IconWatchlist({ size = 16 }: { size?: number }): ReactElement {
+  return (
+    <svg viewBox="0 0 16 16" width={size} height={size} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 4h10M3 8h10M3 12h10" />
+      <circle cx="1.5" cy="4" r="0.75" fill="currentColor" />
+      <circle cx="1.5" cy="8" r="0.75" fill="currentColor" />
+      <circle cx="1.5" cy="12" r="0.75" fill="currentColor" />
+    </svg>
+  )
+}
+
+/** 行情柱/图表图标。 */
+export function IconQuotes({ size = 16 }: { size?: number }): ReactElement {
+  return (
+    <svg viewBox="0 0 16 16" width={size} height={size} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 13V7M7 13V3M11 13V9M15 13V5" />
+    </svg>
+  )
+}
+
+/** 下拉小箭头图标。 */
+export function IconChevronDown({ size = 12 }: { size?: number }): ReactElement {
+  return (
+    <svg viewBox="0 0 16 16" width={size} height={size} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 6l4 4 4-4" />
+    </svg>
+  )
+}
+
+/** 行尾「更多操作」按钮（三个点）。 */
+export function IconMore({ size = 14 }: { size?: number }): ReactElement {
+  return (
+    <svg viewBox="0 0 16 16" width={size} height={size} aria-hidden="true" fill="currentColor">
+      <circle cx="3.5" cy="8" r="1.3" />
+      <circle cx="8" cy="8" r="1.3" />
+      <circle cx="12.5" cy="8" r="1.3" />
+    </svg>
+  )
+}
+
+/** 重命名（铅笔）。 */
+export function IconRename({ size = 14 }: { size?: number }): ReactElement {
+  return (
+    <svg viewBox="0 0 16 16" width={size} height={size} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M11.5 2.8a1.6 1.6 0 0 1 2.26 2.26l-8.3 8.3-3.1.84.84-3.1z" />
+      <path d="M10.3 4.2l2.1 2.1" />
+    </svg>
+  )
+}
+
+/** 分叉会话（分支）。 */
+export function IconFork({ size = 14 }: { size?: number }): ReactElement {
+  return (
+    <svg viewBox="0 0 16 16" width={size} height={size} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="4" cy="3.5" r="1.75" />
+      <circle cx="4" cy="12.5" r="1.75" />
+      <circle cx="12" cy="5.5" r="1.75" />
+      <path d="M4 5.25v5.5" />
+      <path d="M12 7.25c0 2.5-3 2.5-5.5 3.9" />
+    </svg>
+  )
+}
+
+/** 归档会话（盒子+下移箭头）。 */
+export function IconArchive({ size = 14 }: { size?: number }): ReactElement {
+  return (
+    <svg viewBox="0 0 16 16" width={size} height={size} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2.5" y="2.75" width="11" height="3" rx="0.75" />
+      <path d="M3.5 5.75v6a1.25 1.25 0 0 0 1.25 1.25h6.5a1.25 1.25 0 0 0 1.25-1.25v-6" />
+      <path d="M6.75 8.5h2.5" />
+    </svg>
+  )
+}
+
+/** 删除（垃圾桶）。 */
+export function IconTrash({ size = 14 }: { size?: number }): ReactElement {
+  return (
+    <svg viewBox="0 0 16 16" width={size} height={size} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 4.25h10" />
+      <path d="M6.25 4.25V3.1c0-.35.29-.6.63-.6h2.24c.34 0 .63.25.63.6v1.15" />
+      <path d="M4.4 4.25l.55 8.1c.03.5.44.9.94.9h4.22c.5 0 .91-.4.94-.9l.55-8.1" />
+      <path d="M6.7 7v3.5M9.3 7v3.5" />
+    </svg>
+  )
+}
+
+/** 关闭（×）。 */
+export function IconClose({ size = 14 }: { size?: number }): ReactElement {
+  return (
+    <svg viewBox="0 0 16 16" width={size} height={size} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4.25 4.25l7.5 7.5M11.75 4.25l-7.5 7.5" />
+    </svg>
+  )
+}
+
+/** 新增（+）。 */
+export function IconPlus({ size = 12 }: { size?: number }): ReactElement {
+  return (
+    <svg viewBox="0 0 16 16" width={size} height={size} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M8 3.5v9M3.5 8h9" />
+    </svg>
+  )
+}
+
+/** 右向小箭头（展开/折叠 caret，旋转承载两个方向）。 */
+export function IconChevronRight({ size = 11 }: { size?: number }): ReactElement {
+  return (
+    <svg viewBox="0 0 16 16" width={size} height={size} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M6 3.75 10.25 8 6 12.25" />
+    </svg>
+  )
+}
+
+/** 资产面板入口（钱包）。 */
+export function IconWallet({ size = 16 }: { size?: number }): ReactElement {
+  return (
+    <svg viewBox="0 0 16 16" width={size} height={size} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="4" width="12" height="9" rx="1.75" />
+      <path d="M2 6.5h12" />
+      <path d="M10.5 10.25h1.75" />
+    </svg>
+  )
+}
+
+/** 市场快讯入口（闪电）。 */
+export function IconFlash({ size = 16 }: { size?: number }): ReactElement {
+  return (
+    <svg viewBox="0 0 16 16" width={size} height={size} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M8.9 1.9 3.75 8.5h3.1l-.5 5.6L11.5 7.3H8.35z" />
+    </svg>
+  )
+}
+
+/** 宏观/利率入口（地球：经纬圈）。 */
+export function IconGlobe({ size = 16 }: { size?: number }): ReactElement {
+  return (
+    <svg viewBox="0 0 16 16" width={size} height={size} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="8" cy="8" r="6.25" />
+      <ellipse cx="8" cy="8" rx="2.7" ry="6.25" />
+      <path d="M1.75 8h12.5" />
+    </svg>
+  )
+}
+
+/** 勾选（分组选中态）。 */
+export function IconCheck({ size = 12 }: { size?: number }): ReactElement {
+  return (
+    <svg viewBox="0 0 16 16" width={size} height={size} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3.25 8.5 6.5 11.75 12.75 4.75" />
+    </svg>
+  )
+}
+
+/** 分组（文件夹）。 */
+export function IconReport({ size = 14 }: { size?: number }): ReactElement {
+  return (
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d="M4 1.75h5.1L12.5 5.2v9.05c0 .55-.45 1-1 1h-7.5c-.55 0-1-.45-1-1V2.75c0-.55.45-1 1-1Z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+      <path d="M9 1.9v3.4h3.4" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+      <path d="M5.6 8.4h4.8M5.6 11h3.2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+export function IconFolder({ size = 14 }: { size?: number }): ReactElement {
+  return (
+    <svg viewBox="0 0 16 16" width={size} height={size} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 4.25A1.25 1.25 0 0 1 3.25 3h3l1.5 1.75h5A1.25 1.25 0 0 1 14 6v6a1.25 1.25 0 0 1-1.25 1.25H3.25A1.25 1.25 0 0 1 2 12z" />
+    </svg>
+  )
+}
+
+/**
+ * 置顶（图钉）：帽线 + 钉盘 + 钉针，与既有 outline 图标同 viewBox/线宽。
+ * `pressed` = 已置顶：钉盘实心 + 描边加粗，靠形状而非只靠颜色区分状态。
+ */
+export function IconPin({ size = 14, pressed = false }: { size?: number; pressed?: boolean }): ReactElement {
+  return (
+    <svg viewBox="0 0 16 16" width={size} height={size} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth={pressed ? 1.7 : 1.3} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M6.1 2.6h3.8" />
+      <path d="M6.6 2.6v3.5L4.85 8.05h6.3L9.4 6.1V2.6" fill={pressed ? 'currentColor' : 'none'} />
+      <path d="M8 8.05v5.35" />
+    </svg>
+  )
+}
+
+/** 预测市场入口（概率分布：钟形曲线 + 基线）。 */
+export function IconPrediction({ size = 16 }: { size?: number }): ReactElement {
+  return (
+    <svg viewBox="0 0 16 16" width={size} height={size} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 12.5h12" />
+      <path d="M2.75 12.25c2.4 0 2.9-6.5 5.25-6.5s2.85 6.5 5.25 6.5" />
+    </svg>
+  )
+}
+
+/** 自选管理（列表 + 滑杆，富途管理入口近似形）。 */
+export function IconManageList({ size = 14 }: { size?: number }): ReactElement {
+  return (
+    <svg viewBox="0 0 16 16" width={size} height={size} aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2.75 4h6M2.75 8h4M2.75 12h6" />
+      <path d="M12.25 2.75v10.5" />
+      <circle cx="12.25" cy="5.5" r="1.4" fill="currentColor" stroke="none" />
+    </svg>
+  )
+}

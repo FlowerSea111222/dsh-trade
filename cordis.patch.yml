@@ -1,0 +1,202 @@
+# dsh-trading-panel —— 单入口聚合 bundle。
+# 本文件由 .state/merge_patch.py 从已安装的 @dshtrading/{base,cn,us,hk,futures,global,bot-api,gui}
+# 的 cordis.patch.yml 逐行合并（注释已剥离，行 id / config / !!js 原样保留），
+# 末尾追加一行把 GUI 壳行（id dsh-trading-client-ui-trading）替换成本插件，
+# 从而整个交易栈在插件列表里只占一个条目。改上游版本后需重新生成本文件。
+
+# ---- base ----
+- insert:
+    - id: dsh-trading-base-gate
+      name: '@dshtrading/base'
+    - id: dsh-trading-role-presets
+      name: '@dshtrading/base/presets'
+    - id: dsh-trading-market-router
+      name: '@dshtrading/router'
+    - id: dsh-trading-eventbus
+      name: '@dshtrading/eventbus'
+    - id: dsh-trading-strategies
+      name: '@dshtrading/strategies/plugin'
+    - id: dsh-trading-watchlist
+      name: '@dshtrading/watchlist/plugin'
+    - id: dsh-trading-indicators
+      name: '@dshtrading/indicators/plugin'
+    - id: dsh-trading-knowledge
+      name: '@dshtrading/knowledge/plugin'
+    - id: dsh-trading-holdings
+      name: '@dshtrading/holdings/plugin'
+    - id: dsh-trading-market-tools
+      name: '@dshtrading/base/market-tools'
+    - id: dsh-trading-connector-jin10
+      name: '@dshtrading/connector-jin10'
+      config:
+        enabled: true
+    - id: dsh-trading-connector-polymarket
+      name: '@dshtrading/connector-polymarket'
+      config:
+        enabled: true
+    - id: skill-office
+      name: '@deepseek-ai/dsh-skill-office'
+      disabled: !!js "!(process.env.DSH_PRIMARY_RUNTIME ?? process.env.DSH_BUNDLED_PRIMARY_RUNTIME)"
+    - id: workspace-dependencies
+      name: '@deepseek-ai/dsh-tool-workspace-dependencies'
+      disabled: !!js "!(process.env.DSH_PRIMARY_RUNTIME ?? process.env.DSH_BUNDLED_PRIMARY_RUNTIME)"
+      config:
+        source: !!js "process.getBuiltinModule('node:path').resolve(process.env.DSH_PRIMARY_RUNTIME ?? process.env.DSH_BUNDLED_PRIMARY_RUNTIME ?? '')"
+- id: agent-preset-registry
+  name: '@deepseek-ai/dsh-agent-preset-registry'
+  config:
+    default: master
+
+# ---- cn ----
+- insert:
+    - id: dsh-trading-cn-installer
+      name: '@dshtrading/cn'
+    - id: dsh-trading-cn-dataplane
+      name: '@dshtrading/connector-tencent/dataplane'
+      inject: ['tradingMarketDataRegistry']
+      config:
+        market: cn
+    - id: dsh-trading-cn-dataplane-eastmoney
+      name: '@dshtrading/connector-eastmoney/dataplane'
+      inject: ['tradingMarketDataRegistry']
+      config:
+        enabled: true
+    - id: dsh-trading-cn-dataplane-tushare
+      name: '@dshtrading/connector-tushare/dataplane'
+      inject: ['tradingMarketDataRegistry']
+      config:
+        enabled: true
+    - id: dsh-trading-cn-dataplane-akshare
+      name: '@dshtrading/connector-akshare/dataplane'
+      inject: ['tradingMarketDataRegistry']
+      config:
+        enabled: true
+    - id: dsh-trading-cn-dataplane-qmt
+      name: '@dshtrading/connector-qmt/dataplane'
+      inject: ['tradingMarketDataRegistry']
+      config:
+        enabled: true
+    - id: dsh-trading-cn-dataplane-hithink
+      name: '@dshtrading/connector-hithink/dataplane'
+      inject: ['tradingMarketDataRegistry']
+      config:
+        enabled: true
+    - id: dsh-trading-cn-dataplane-xysz
+      name: '@dshtrading/connector-xysz/dataplane'
+      inject: ['tradingMarketDataRegistry']
+      config:
+        enabled: true
+
+# ---- us ----
+- insert:
+    - id: dsh-trading-us-installer
+      name: '@dshtrading/us'
+    - id: dsh-trading-us-dataplane-yahoo
+      name: '@dshtrading/connector-yahoo/dataplane'
+      inject: ['tradingMarketDataRegistry']
+    - id: dsh-trading-us-dataplane-alpaca
+      name: '@dshtrading/connector-alpaca/dataplane'
+      inject: ['tradingMarketDataRegistry']
+      config:
+        enabled: true
+    - id: dsh-trading-us-dataplane-fmp
+      name: '@dshtrading/connector-fmp/dataplane'
+      inject: ['tradingMarketDataRegistry']
+      config:
+        enabled: true
+    - id: dsh-trading-us-dataplane-finnhub
+      name: '@dshtrading/connector-finnhub/dataplane'
+      inject: ['tradingMarketDataRegistry']
+      config:
+        enabled: true
+    - id: dsh-trading-us-dataplane-polygon
+      name: '@dshtrading/connector-polygon/dataplane'
+      inject: ['tradingMarketDataRegistry']
+      config:
+        enabled: true
+    - id: dsh-trading-us-dataplane-ibkr
+      name: '@dshtrading/connector-ibkr/dataplane'
+      inject: ['tradingMarketDataRegistry']
+      config:
+        enabled: true
+
+# ---- hk ----
+- insert:
+    - id: dsh-trading-hk-installer
+      name: '@dshtrading/hk'
+    - id: dsh-trading-hk-dataplane-tencent
+      name: '@dshtrading/connector-tencent/dataplane'
+      inject: ['tradingMarketDataRegistry']
+      config:
+        market: hk
+    - id: dsh-trading-hk-dataplane-futu
+      name: '@dshtrading/connector-futu/dataplane'
+      inject: ['tradingMarketDataRegistry']
+      config:
+        enabled: true
+        gatewayUrl: 'http://127.0.0.1:11112'
+    - id: dsh-trading-hk-dataplane-eastmoney
+      name: '@dshtrading/connector-eastmoney/dataplane'
+      inject: ['tradingMarketDataRegistry']
+      config:
+        enabled: true
+        market: hk
+    - id: dsh-trading-hk-dataplane-longbridge
+      name: '@dshtrading/connector-longbridge/dataplane'
+      inject: ['tradingMarketDataRegistry']
+      config:
+        enabled: true
+    - id: dsh-trading-hk-dataplane-tiger
+      name: '@dshtrading/connector-tiger/dataplane'
+      inject: ['tradingMarketDataRegistry']
+      config:
+        enabled: true
+
+# ---- futures ----
+- insert:
+    - id: dsh-trading-futures-installer
+      name: '@dshtrading/futures'
+    - id: dsh-trading-futures-dataplane
+      name: '@dshtrading/connector-hithink/futures-dataplane'
+      inject: ['tradingMarketDataRegistry']
+      config:
+        enabled: true
+
+# ---- global ----
+- insert:
+    - id: dsh-trading-global-installer
+      name: '@dshtrading/global'
+    - id: dsh-trading-global-dataplane-jin10
+      name: '@dshtrading/connector-jin10/dataplane'
+      inject: ['tradingMarketDataRegistry']
+      config:
+        enabled: true
+
+# ---- bot-api ----
+- insert:
+    - id: dsh-trading-bot-api
+      name: '@dshtrading/bot-api'
+
+# ---- gui ----
+- insert:
+    - id: dsh-trading-client-ui-settings
+      name: '@dshtrading/client-ui-settings'
+    - id: dsh-trading-dsh-i18n
+      name: '@dshtrading/dsh-i18n'
+    - id: dsh-trading-client-ui-trading
+      name: '@dshtrading/client-ui-trading'
+    - id: dsh-trading-client-ui-indicators
+      name: '@dshtrading/client-ui-indicators'
+    - id: dsh-trading-indicator-supertrend
+      name: '@dshtrading/indicator-supertrend'
+    - id: dsh-trading-client-ui-strategies
+      name: '@dshtrading/client-ui-strategies'
+    - id: dsh-trading-client-ui-knowledge
+      name: '@dshtrading/client-ui-knowledge'
+    - id: dsh-trading-client-ui-masters-quotes
+      name: '@dshtrading/client-ui-masters-quotes'
+
+# ---- dsh-trading-panel（替换 GUI 壳行）----
+- insert:
+    - id: dsh-trading-client-ui-trading
+      name: 'dsh-trading-panel'

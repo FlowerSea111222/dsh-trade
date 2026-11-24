@@ -1,0 +1,16 @@
+/* QuotePane —— 中栏行情面板（恒渲染，几何由组件按栅格实测）。 */
+
+.pane {
+  position: fixed;
+  z-index: 30;
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  background: var(--dsw-futu-bg-base, var(--dsw-alias-bg-base, #ffffff));
+  overflow: hidden;
+}
+
+.pane > * {
+  flex: 1;
+  min-height: 0;
+}

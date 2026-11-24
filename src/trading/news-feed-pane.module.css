@@ -1,0 +1,100 @@
+.pane {
+  max-height: 240px;
+  overflow-y: auto;
+  border-top: 1px solid var(--dsw-futu-border-default, #e3e6ea);
+  background: var(--dsw-futu-bg-base, #ffffff);
+  font-size: 12px;
+}
+
+.pane.fullHeight {
+  max-height: none;
+  height: 100%;
+  flex: 1;
+  border-top: none;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.item {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--dsw-futu-border-subtle, #edf0f3);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.item:hover {
+  background: var(--dsw-futu-bg-surface-hover, rgba(0, 0, 0, 0.04));
+}
+
+.source {
+  flex-shrink: 0;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 500;
+  color: #fff;
+  white-space: nowrap;
+}
+
+/* 热度徽标（金十快讯网页版 火/热/沸/爆；无 hot 的源不渲染）。 */
+.hotBadge {
+  flex-shrink: 0;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 500;
+  color: #fff;
+  white-space: nowrap;
+  background: #6b7280;
+}
+
+.hotBadge[data-hot='火'] { background: #f59e0b; }
+.hotBadge[data-hot='热'] { background: #ef7d3a; }
+.hotBadge[data-hot='沸'] { background: #e5484d; }
+.hotBadge[data-hot='爆'] { background: #b4231f; }
+
+/* 不同源类型的色系 */
+.source[data-type='exchange'] { background: #f59e0b; }
+.source[data-type='media'] { background: #3b82f6; }
+.source[data-type='rss'] { background: #6b7280; }
+
+.title {
+  flex: 1;
+  line-height: 1.45;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--dsw-futu-text-primary, #1a1e24);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.time {
+  flex-shrink: 0;
+  color: var(--dsw-futu-text-secondary, #5f6672);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.empty {
+  padding: 24px 16px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--dsw-futu-text-secondary, #5f6672);
+}
+
+.degraded {
+  padding: 6px 12px;
+  font-size: 11px;
+  color: var(--dsw-futu-text-secondary, #5f6672);
+  border-top: 1px solid var(--dsw-futu-border-subtle, #edf0f3);
+}

@@ -1,0 +1,848 @@
+/* QuoteStage —— 中栏行情视图（富途牛牛风格：报价头 + K线图 + 周期胶囊 + 底部指标词条 + 状态栏）。 */
+
+.root {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 8px 14px 4px;
+  box-sizing: border-box;
+  gap: 6px;
+  font-size: 12.5px;
+  background: var(--dsw-futu-bg-base, #ffffff);
+  color: var(--dsw-futu-text-primary, #1a1e24);
+}
+
+.empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--dsw-futu-text-muted, #8e95a3);
+  text-align: center;
+  line-height: 1.8;
+}
+
+.emptyMain {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--dsw-futu-text-secondary, #5f6672);
+}
+
+/* 顶部报价头 */
+.header {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  flex: none;
+}
+
+.ident {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.name {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--dsw-futu-text-primary, #1a1e24);
+}
+
+.code {
+  font-size: 12px;
+  color: var(--dsw-futu-text-muted, #8e95a3);
+  font-variant-numeric: tabular-nums;
+}
+
+.marketTag {
+  font-size: 10px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: var(--dsw-futu-radius-xs, 3px);
+  border: 1px solid var(--dsw-futu-border-default, #e3e6ea);
+  color: var(--dsw-futu-text-secondary, #5f6672);
+}
+
+.price {
+  font-size: 24px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.changes {
+  display: flex;
+  gap: 8px;
+  font-variant-numeric: tabular-nums;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.meta {
+  margin-left: auto;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--dsw-futu-text-muted, #8e95a3);
+}
+
+/* 行情板块页签（图表 | 基本面）：随报价头同行，同花顺式下划线激活态 */
+.stageTabs {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  margin-left: 2px;
+  padding-left: 12px;
+  border-left: 1px solid var(--dsw-futu-border-default, #e3e6ea);
+}
+
+.stageTab {
+  appearance: none;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--dsw-futu-text-muted, #8e95a3);
+  padding: 2px 8px 6px;
+  position: relative;
+}
+
+.stageTab:hover {
+  color: var(--dsw-futu-text-primary, #1a1e24);
+}
+
+.stageTab[data-active='true'] {
+  color: var(--dsw-futu-text-primary, #1a1e24);
+}
+
+.stageTab[data-active='true']::after {
+  content: '';
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 0;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--dsw-futu-text-primary, #1a1e24);
+}
+
+/* 区间统计按钮激活态（与技术指标按钮同族样式） */
+.pickerButton[data-active='true'] {
+  color: #2563eb;
+  border-color: rgba(37, 99, 235, 0.45);
+  background: rgba(37, 99, 235, 0.06);
+}
+
+/* 区间统计浮层（chartBox 右上角，框选模式开启且有选区时显示） */
+.rangePanel {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 3;
+  width: 168px;
+  background: var(--dsw-futu-bg-base, #ffffff);
+  border: 1px solid var(--dsw-futu-border-default, #e3e6ea);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(26, 30, 36, 0.1);
+  padding: 8px 10px;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.rangePanelHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 700;
+  color: var(--dsw-futu-text-primary, #1a1e24);
+}
+
+.rangePanelClose {
+  appearance: none;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--dsw-futu-text-muted, #8e95a3);
+  padding: 0 2px;
+}
+
+.rangePanelClose:hover {
+  color: var(--dsw-futu-text-primary, #1a1e24);
+}
+
+.rangePanelSpan {
+  color: var(--dsw-futu-text-muted, #8e95a3);
+  font-size: 10.5px;
+}
+
+.rangePanelRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.rangePanelRow > span:first-child {
+  color: var(--dsw-futu-text-muted, #8e95a3);
+}
+
+.rangePanelRow > span:last-child {
+  font-weight: 600;
+  color: var(--dsw-futu-text-primary, #1a1e24);
+}
+
+/* TradFi 合约明示条（2026-10-08 P5）：只在 TradFi 永续上渲染，提示合成合约与 24/7 报价语义 */
+.tradfiNotice {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex: none;
+  padding: 4px 8px;
+  border: 1px solid var(--dsw-futu-border-subtle, #edf0f3);
+  border-left: 2px solid var(--dsw-futu-border-active, #3b82f6);
+  border-radius: var(--dsw-futu-radius-md, 6px);
+  background: var(--dsw-futu-bg-surface, #f7f8fa);
+  font-size: 11px;
+  color: var(--dsw-futu-text-secondary, #5f6672);
+}
+
+.tradfiNoticeTitle {
+  font-weight: 600;
+  color: var(--dsw-futu-text-primary, #1a1e24);
+  white-space: nowrap;
+}
+
+.tradfiNoticeDetail {
+  min-width: 0;
+}
+
+/* 统计数据横栏 */
+.stats {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--dsw-futu-text-secondary, #5f6672);
+  flex: none;
+}
+
+.stat label {
+  color: var(--dsw-futu-text-muted, #8e95a3);
+  margin-right: 4px;
+}
+
+/* 周期与工具栏 */
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 2px 0;
+  border-top: 1px solid var(--dsw-futu-border-subtle, #edf0f3);
+  border-bottom: 1px solid var(--dsw-futu-border-subtle, #edf0f3);
+  flex: none;
+}
+
+.intervalTabs {
+  display: flex;
+  gap: 3px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.intervalTabs::-webkit-scrollbar {
+  display: none;
+}
+
+.intervalTab {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--dsw-futu-text-secondary, #5f6672);
+  padding: 3px 8px;
+  border-radius: var(--dsw-futu-radius-pill, 14px);
+  font-size: 11.5px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+
+.intervalTab:hover {
+  color: var(--dsw-futu-text-primary, #1a1e24);
+  background: var(--dsw-futu-bg-surface-hover, rgba(0, 0, 0, 0.04));
+}
+
+.intervalTab[data-active='true'] {
+  color: var(--dsw-futu-bg-base, #ffffff);
+  font-weight: 600;
+  background: var(--dsw-futu-text-primary, #1f2937);
+}
+
+/* 右侧动作组：工具开关 + 指标选择弹层锚（弹层 right:0 贴组右缘）；
+   「发送给 Agent」已迁至报价头常驻统一入口（2026-09-04）。 */
+.toolbarActions {
+  position: relative;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 指标选择弹层 */
+.indicatorAnchor {
+  position: relative;
+}
+
+.pickerButton {
+  appearance: none;
+  border: 1px solid var(--dsw-futu-border-default, #e3e6ea);
+  background: var(--dsw-futu-bg-surface, #ffffff);
+  color: var(--dsw-futu-text-primary, #1a1e24);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
+  border-radius: var(--dsw-futu-radius-md, 6px);
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.pickerButton:hover {
+  background: var(--dsw-futu-bg-surface-hover, rgba(0, 0, 0, 0.04));
+}
+
+.pickerButton[aria-expanded='true'] {
+  background: var(--dsw-futu-bg-surface-active, rgba(0, 0, 0, 0.08));
+}
+
+.pickerBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 39;
+}
+
+.pickerPanel {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  width: 250px;
+  max-height: min(420px, 60vh);
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: var(--dsw-futu-radius-lg, 8px);
+  border: 1px solid var(--dsw-futu-border-default, #e3e6ea);
+  background: var(--dsw-futu-bg-surface, #ffffff);
+  box-shadow: var(--dsw-futu-shadow-lg, 0 8px 24px rgba(0, 0, 0, 0.12));
+  font-size: 12px;
+}
+
+.pickerTitle {
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.pickerGroup {
+  display: flex;
+  flex-direction: column;
+}
+
+.pickerGroupTitle {
+  font-size: 11px;
+  color: var(--dsw-futu-text-muted, #8e95a3);
+  margin: 6px 0 2px;
+}
+
+/* 自定义指标加载失败行（选择器内）：可见失败态 + 「重试」按钮（2026-10-14）。 */
+.pickerLoadFailure {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 6px 8px;
+  border-radius: var(--dsw-futu-radius-sm, 4px);
+  border: 1px solid var(--dsw-futu-up-border, rgba(230, 69, 69, 0.22));
+  background: var(--dsw-futu-up-bg, rgba(230, 69, 69, 0.08));
+  color: var(--dsw-futu-up, #e64545);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.pickerLoadFailureText {
+  flex: 1;
+  min-width: 0;
+  word-break: break-word;
+}
+
+.pickerLoadRetry {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: var(--dsw-futu-radius-sm, 4px);
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.pickerRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  border-radius: var(--dsw-futu-radius-sm, 4px);
+}
+
+.pickerLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: 1;
+  min-width: 0;
+  padding: 3px 2px;
+  cursor: pointer;
+}
+
+.pickerLabel input {
+  accent-color: #2563eb;
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  cursor: pointer;
+  flex: none;
+}
+
+.pickerParams {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: #2563eb;
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: var(--dsw-futu-radius-xs, 3px);
+  cursor: pointer;
+}
+
+.pickerParams:hover,
+.pickerParams[data-open='true'] {
+  background: var(--dsw-futu-bg-surface-hover, rgba(0, 0, 0, 0.05));
+}
+
+.paramHint {
+  font-size: 11px;
+  color: var(--dsh-text-secondary, #8a8f99);
+  margin-bottom: 6px;
+}
+
+.paramEditor {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 0 6px;
+  border-top: 1px dashed var(--dsw-futu-border-default, #e3e6ea);
+}
+
+.paramRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.paramRow input {
+  width: 72px;
+  box-sizing: border-box;
+  padding: 3px 6px;
+  border: 1px solid var(--dsw-futu-border-default, #e3e6ea);
+  border-radius: var(--dsw-futu-radius-sm, 4px);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+.paramActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.paramButton {
+  appearance: none;
+  border: 1px solid var(--dsw-futu-border-default, #e3e6ea);
+  background: transparent;
+  color: inherit;
+  padding: 3px 10px;
+  border-radius: var(--dsw-futu-radius-sm, 4px);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.paramButton:hover {
+  background: var(--dsw-futu-bg-surface-hover, rgba(0, 0, 0, 0.05));
+}
+
+.paramApply {
+  border-color: transparent;
+  background: #2563eb;
+  color: #ffffff;
+}
+
+.paramApply:hover {
+  background: #1d4ed8;
+}
+
+/* 适用范围编辑器（指标设置内，按市场分行；沿用参数编辑器的视觉语汇） */
+.scopeEditor {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 0 6px;
+  border-top: 1px dashed var(--dsw-futu-border-default, #e3e6ea);
+}
+
+.scopeHint {
+  font-size: 11px;
+  color: var(--dsw-futu-text-muted, #8e95a3);
+  margin-bottom: 2px;
+}
+
+.scopeMarket {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.scopeRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.scopeLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.scopeLabel input,
+.scopeInterval input {
+  accent-color: #2563eb;
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  cursor: pointer;
+  flex: none;
+}
+
+.scopeSummary {
+  font-size: 11px;
+  color: var(--dsw-futu-text-muted, #8e95a3);
+  white-space: nowrap;
+}
+
+.scopeIntervals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  padding: 2px 0 2px 20px;
+}
+
+.scopeInterval {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.scopeActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  padding-bottom: 2px;
+}
+
+/* 指标读数栏（主图指标；流内元素——行数即下方图表容器高度，
+   布局契约见 indicator-readout.ts 模块头注） */
+.indicatorReadout {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  min-height: 15px;
+  color: var(--dsw-futu-text-secondary, #5f6672);
+  flex: none;
+}
+
+/* 读数值列：定宽（min-width 由组件按该 output 全序列最大字符数给 ch），
+   值与缺值占位同宽——行内每项宽度与十字光标位置无关，行数才不会抖动。 */
+.readoutValue {
+  display: inline-block;
+}
+
+.chartBox {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+
+/* 盘口竖栏布局（issue #39）：图表列 + 右侧可折叠盘口列（图表页签专属） */
+.chartRow {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 8px;
+}
+
+.chartColumn {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.rightSidebar {
+  flex: none;
+  width: 240px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+/* 底部指标词条带（富途式横向词条） */
+.quickIndicatorBar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 0;
+  border-top: 1px solid var(--dsw-futu-border-subtle, #edf0f3);
+  overflow-x: auto;
+  scrollbar-width: none;
+  flex: none;
+}
+
+.quickIndicatorBar::-webkit-scrollbar {
+  display: none;
+}
+
+.quickIndicatorTag {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--dsw-futu-text-muted, #8e95a3);
+  padding: 2px 7px;
+  border-radius: var(--dsw-futu-radius-xs, 3px);
+  font-size: 11px;
+  font-family: var(--dsw-futu-font-mono, monospace);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.12s, background 0.12s;
+}
+
+.quickIndicatorTag:hover {
+  color: var(--dsw-futu-text-primary, #1a1e24);
+  background: var(--dsw-futu-bg-surface-hover, rgba(0, 0, 0, 0.04));
+}
+
+.quickIndicatorTag[data-active='true'] {
+  color: var(--dsw-futu-text-primary, #1f2937);
+  font-weight: 700;
+  background: var(--dsw-futu-bg-surface-active, rgba(0, 0, 0, 0.08));
+}
+
+/* 底部市场状态栏（富途牛牛式指数与交易状态） */
+.statusBar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 4px 0 2px;
+  border-top: 1px solid var(--dsw-futu-border-subtle, #edf0f3);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--dsw-futu-text-secondary, #5f6672);
+  flex: none;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.statusBar::-webkit-scrollbar {
+  display: none;
+}
+
+.statusSession {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.statusDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--dsw-futu-up, #e64545);
+  display: inline-block;
+}
+
+.indexGroup {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.indexName {
+  color: var(--dsw-futu-text-muted, #8e95a3);
+}
+
+.statusClock {
+  margin-left: auto;
+  color: var(--dsw-futu-text-muted, #8e95a3);
+  white-space: nowrap;
+}
+
+.error {
+  padding: 8px 0;
+  color: var(--dsw-futu-up, #e64545);
+  font-size: 12px;
+}
+
+/* KDAS 关键日右键菜单（chartBox 内绝对定位；坐标来自 TvChart 容器系） */
+.kdasMenu {
+  position: absolute;
+  z-index: 6;
+  min-width: 190px;
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  border-radius: var(--dsw-futu-radius-lg, 8px);
+  border: 1px solid var(--dsw-futu-border-default, #e3e6ea);
+  background: var(--dsw-futu-bg-surface, #ffffff);
+  box-shadow: var(--dsw-futu-shadow-lg, 0 8px 24px rgba(0, 0, 0, 0.12));
+  font-size: 12px;
+}
+
+.kdasMenuTitle {
+  font-weight: 600;
+  color: var(--dsw-futu-text-primary, #1a1e24);
+  padding: 2px 6px 6px;
+}
+
+.kdasMenuItem {
+  appearance: none;
+  border: none;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px;
+  border-radius: var(--dsw-futu-radius-sm, 4px);
+  color: var(--dsw-futu-text-primary, #1a1e24);
+  font-size: 12px;
+}
+
+.kdasMenuItem:hover:not(:disabled) {
+  background: var(--dsw-futu-bg-surface-active, rgba(0, 0, 0, 0.08));
+}
+
+.kdasMenuItem:disabled {
+  cursor: not-allowed;
+  color: var(--dsw-futu-text-muted, #8e95a3);
+}
+
+.kdasMenuDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.kdasMenuDate {
+  font-variant-numeric: tabular-nums;
+}
+
+.kdasMenuAction {
+  margin-left: auto;
+  color: var(--dsw-futu-text-muted, #8e95a3);
+  font-size: 11px;
+}
+
+.kdasMenuGroup {
+  font-size: 11px;
+  color: var(--dsw-futu-text-muted, #8e95a3);
+  padding: 6px 6px 2px;
+}
+
+.kdasMenuHint {
+  font-size: 10.5px;
+  color: var(--dsw-futu-text-muted, #8e95a3);
+  padding: 6px 6px 2px;
+  border-top: 1px solid var(--dsw-futu-border-default, #e3e6ea);
+  margin-top: 4px;
+}
+
+/* 五日级别量比档位图例（图表下方一行；色块色值与图上成交量同源，
+   来自 five-day-series.ts 的 fiveDayVolumeColor） */
+.ratioLegend {
+  flex: none;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 6px 2px 2px;
+  font-size: 11px;
+  color: var(--dsw-futu-text-secondary, #5f6672);
+}
+
+.ratioLegendTitle {
+  font-weight: 600;
+  color: var(--dsw-futu-text-primary, #1f2329);
+}
+
+.ratioLegendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.ratioLegendSwatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex: none;
+  border: 1px solid var(--dsw-futu-border-default, #e3e6ea);
+}
+
+.ratioLegendNote {
+  color: var(--dsw-futu-text-muted, #8e95a3);
+}

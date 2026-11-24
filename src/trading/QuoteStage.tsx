@@ -1,0 +1,2028 @@
+/**
+ * 行情面板主体（中栏 quote 视图）：富途牛牛视觉风格。
+ * 顶部报价头 + K线图 + 周期胶囊条 + 技术指标选择器 +
+ * 主图指标读数行（副图指标读数在 TvChart 各自 pane 内）+
+ * 底部横向指标快捷词条带 + 底部市场指数状态栏。
+ */
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import {
+  fetchKlines, fetchKlinesFrom, fetchTickers, fetchDerivatives, fetchDerivativesHistory, fetchOrderbook, fetchRecentTrades,
+  fetchTradePositions, fetchTradeBalances, fetchTradeOpenOrders, fetchTradeFills, placeGuiOrder,
+  cancelGuiOrder, fetchSouthboundHoldings, fetchActiveBuy, type TradeRowsReason,
+} from './api.ts'
+import { setHoldingsPanelOpen } from './holdings-store.ts'
+import { tradeModeStore, writeTradeMode } from './trade-mode-store.ts'
+import {
+  createOrderIntentTracker, submitGuiCancel, submitGuiOrder,
+  type GuiApprovalContextProps, type OrderIntentTracker,
+} from './gui-approval.ts'
+import { TvChart, toBar } from './TvChart.tsx'
+import { FundamentalsStage } from './FundamentalsStage.tsx'
+import { DerivativesPane } from './DerivativesPane.tsx'
+import { DerivativesStage } from './DerivativesStage.tsx'
+import { OrderbookPane } from './OrderbookPane.tsx'
+import { IntradayChart } from './IntradayChart.tsx'
+import { OrderPanel } from './OrderPanel.tsx'
+import { paperTradingStore } from './paper-trading-store.ts'
+import { computeRangeStats } from './range-stats.ts'
+import { readoutItems } from './indicator-readout.ts'
+import {
+  addKdasDay, clampRectInto, formatKdasDay, isKdasDay, kdasAnchorSourceDay, kdasOutputKey, kdasSlots,
+  removeKdasDay, utcDayNum,
+} from './kdas-menu.ts'
+import { IconIndicators } from './icons.tsx'
+import type { MarketLocaleKey } from './contract.ts'
+import {
+  INTRADAY_INTERVALS, changePercent, directionColor,
+  fmtChange, fmtClock, fmtCompact, fmtPercent, fmtPrice, scaleLocaleOf,
+} from './format.ts'
+import { indicators, isCustomIndicator } from './indicator-registry.ts'
+import { customIndicatorLoader, type IndicatorLoadFailure } from './indicator-load.ts'
+import { isTradFiPerp, resolveAssetClass, rowForm } from './instrument-meta.ts'
+import type { IndicatorDefinition, IndicatorInstance, IndicatorMarketScope } from '@dshtrading/indicators'
+import {
+  effectiveInstanceParams, effectiveMarketScope, isInstanceVisibleOn, symbolScopeKey,
+} from '@dshtrading/indicators'
+import { auxEmptyNoticeKey, requiredAuxKeys } from './aux-series.ts'
+import { useAuxSeries } from './useAuxSeries.ts'
+import { availableDefinitions, dispatchIndicatorGroups } from './indicator-dispatch.ts'
+import { defaultScopeEntries } from './indicator-defaults.ts'
+import { ensureMarketProviders, useMarketCapabilities, useMarketProviders } from './market-providers.ts'
+import { useDarkTheme } from './theme-mode.ts'
+import {
+  FIVE_DAY_DEFAULT_DAYS, FIVE_DAY_INTERVAL, FIVE_DAY_KLINE_LIMIT, FIVE_DAY_LEGEND_TIERS, FIVE_DAY_RESYNC_MS,
+  chartIntervals, clampFiveDayDays, fiveDayCapability, fiveDayDayStarts, fiveDayDisplayRange,
+  fiveDayTickerProvider, fiveDayVolumeColor, rememberableInterval, tickerBarMergeable, toFiveDayBars, type FiveDayTier,
+} from './five-day-series.ts'
+import { fiveDayVolumeTierBarAux } from './volume-tier-bar-aux.ts'
+import { MARKET_TAB_KEY } from './market-vocab.ts'
+import { SCOPE_MARKETS, normalizeMarketScope, selectApplicableInstances, supportedIntervals } from './indicator-scope.ts'
+import type { SelectionState } from './store.ts'
+import type { ChartState } from './chart-state.ts'
+import type { AccountBalance, DerivativesData, DerivativesHistory, Order, Orderbook, Position, TradeFill, TradeTick } from './types.ts'
+import { colorModeStore, type ColorMode } from './color-mode.ts'
+import { MARKET_INDICES, getMarketSessionStatus, type MarketIndexDef } from './market-status.ts'
+import { restoreFormingBar, withTickerBar, type TickerSnapshot } from './ticker-bar.ts'
+import type { Kline, MarketId, Ticker } from './types.ts'
+import { usePoll } from './usePoll.ts'
+import { residentPollMs } from './quote-budget.ts'
+import { fetchNews } from './api.ts'
+import type { ClientNewsItem } from './api.ts'
+import { NewsFeedPane } from './NewsFeedPane.tsx'
+import { MarkerTooltip } from './MarkerTooltip.tsx'
+import type { MarkerHoverInfo } from './TvChart.tsx'
+import { createMarkerStateStore } from './marker-state.ts'
+import { isAnnouncementSource } from './news-source.ts'
+import type { ChartSignalMarkerInput, ChartKnowledgeMarkerInput } from './TvChart.tsx'
+import css from './quote-stage.module.css'
+
+const INTERVAL_KEY_PREFIX = 'dshtrading.interval.'
+/** KDAS 指标 id（custom 库自定义指标；Key Day 即 kd1..kd8 参数）。 */
+const KDAS_ID = 'kdas'
+const ORDERBOOK_OPEN_KEY = 'dshtrading.orderbook.open'
+const TRADE_DESK_OPEN_KEY = 'dshtrading.tradeDesk.open'
+const TICKER_POLL_MS = 5000
+const KLINE_RESYNC_MS = 30000
+// 衍生品指标快照轮询（issue #38）：一次刷新 = 2~5 个上游公共端点调用，取 30s
+// 对齐 K 线 resync 节奏，避免放大限频消耗（funding 8h 才变，OI 30s 粒度够看）。
+const DERIVATIVES_POLL_MS = 30000
+// 衍生品历史序列（issue #54，页签趋势卡）：8h 一期的费率与 1D OI 变化极慢，
+// 5min 节奏足够；仅页签激活时拉取，省上游配额。
+const DERIVATIVES_HISTORY_POLL_MS = 300000
+// 盘口/分笔轮询（issue #39）：竖栏打开才拉；一次刷新 = depth + trades 两请求，
+// 4s 在「盯盘时效」与公共端点限频之间取衡。
+const ORDERBOOK_POLL_MS = 4000
+// 交易台只读轮询（issue #40）：15s 慢节奏（签名端点 + 个人账户面，无盯盘时效要求）。
+const TRADE_DESK_POLL_MS = 15000
+// 盘中周期 K 线根数按市场区分：crypto 取 300——OKX 单请求上限 300，图表每 30s
+// resync 一次，不触发游标翻页、不放大限频消耗；其余市场取 500。日 K 深度需求由
+// 1d 分支单独走 DAILY_LIMIT。
+const KLINE_LIMIT_DEFAULT = 500
+const KLINE_LIMIT_BY_MARKET: Partial<Record<MarketId, number>> = { crypto: 300 }
+const klineLimit = (market: MarketId): number => KLINE_LIMIT_BY_MARKET[market] ?? KLINE_LIMIT_DEFAULT
+// 日 K（头部参考 + 日线图表）：750 根 ≈ 三年交易日；OKX 超出单请求 300 的部分由连接器 after 游标翻页补足。
+const DAILY_LIMIT = 750
+
+const INTERVAL_KEY: Record<string, MarketLocaleKey> = {
+  intraday: 'interval.intraday',
+  '1m': 'interval.1m',
+  '3m': 'interval.3m',
+  '5m': 'interval.5m',
+  '10m': 'interval.10m',
+  '15m': 'interval.15m',
+  '30m': 'interval.30m',
+  '1h': 'interval.1h',
+  '4h': 'interval.4h',
+  '1d': 'interval.1d',
+  '1w': 'interval.1w',
+  '1M': 'interval.1M',
+  '5d': 'interval.5d',
+}
+
+/** 五日级别量比档位的图例文案键（阈值语义 + 基准日/无前值）。 */
+const RATIO_TIER_KEY: Record<FiveDayTier, MarketLocaleKey> = {
+  lt1: 'volumeRatio.tier.lt1',
+  lt2: 'volumeRatio.tier.lt2',
+  lt3: 'volumeRatio.tier.lt3',
+  gte3: 'volumeRatio.tier.gte3',
+  baseline: 'volumeRatio.tier.baseline',
+  noPrior: 'volumeRatio.tier.noPrior',
+}
+
+export type Translate = (key: MarketLocaleKey, params?: Record<string, unknown>) => string
+
+/** 自定义指标加载失败态的稳定订阅/读取引用（useSyncExternalStore 要求引用稳定，
+ * 内联箭头每次渲染都会重订阅）。 */
+const subscribeIndicatorLoad = (listener: () => void): (() => void) => customIndicatorLoader.subscribe(listener)
+const readIndicatorLoadFailure = (): IndicatorLoadFailure | null => customIndicatorLoader.failure()
+
+export type UseStoreState<TState> = <TSelected>(selector: (state: TState) => TSelected) => TSelected
+
+export interface QuoteStageProps extends GuiApprovalContextProps {
+  t: Translate
+  useSelection: UseStoreState<SelectionState>
+  useChart: UseStoreState<ChartState>
+  toggleIndicator: (id: string) => void
+  setIndicatorParams: (id: string, params: Record<string, number>, scopeKey?: string) => void
+  /**
+   * 按标的可见性（symbol visibility）：visible=false 记隐藏、true 清该标的隐藏。
+   * scopeKey = `${market}:${symbol}`；缺省（无聚焦标的）由 shell 忽略——调用方
+   * 在该情形应退回 toggleIndicator 全局语义。
+   */
+  setIndicatorVisible: (id: string, visible: boolean, scopeKey?: string) => void
+  /**
+   * 适用范围（按市场独立配置适用的 K 线级别）：scope === undefined 删除该市场
+   * 条目（落回「全部市场、全部级别应用」）。不适用 ≠ 取消激活。
+   */
+  setIndicatorScope: (id: string, market: MarketId, scope: IndicatorMarketScope | undefined) => void
+  /** 全局移除：卸载所有标的上的该指标实例（原 togglePreset 全局关语义）。 */
+  removeIndicator: (id: string) => void
+  /** 删除自定义指标（issue #30 删除入口；仅自定义行渲染按钮）。 */
+  deleteIndicator: (id: string) => Promise<boolean>
+}
+
+function inferMarketFromSymbol(symbol?: string): MarketId | undefined {
+  if (!symbol) return undefined
+  const sym = symbol.toUpperCase()
+  if (sym.endsWith('.SH') || sym.endsWith('.SZ') || /^\d{6}$/.test(sym)) return 'cn'
+  if (/^[A-Z]{1,3}\d{2,4}(\.(SHF|DCE|CZC|INE|GFE|CFE))?$/.test(sym)) return 'futures'
+  if (sym.endsWith('.HK') || /^\d{5}$/.test(sym)) return 'hk'
+  if (sym.includes('USDT') || sym.includes('BTC') || sym.includes('ETH')) return 'crypto'
+  return 'us'
+}
+
+/** 信号 reason 的币种符号（按市场；crypto 以 USD 计价近似）。 */
+const CURRENCY_SYMBOL: Record<MarketId, string> = { cn: '¥', hk: 'HK$', us: '$', crypto: '$', futures: '¥', global: '$' }
+
+export function QuoteStage({ t, useSelection, useChart, toggleIndicator, setIndicatorParams, setIndicatorVisible, setIndicatorScope, removeIndicator, deleteIndicator, guiSessionId }: QuoteStageProps) {
+  const instrument = useSelection(value => value.instrument)
+  const market: MarketId | undefined = (instrument?.market && ['crypto', 'us', 'cn', 'hk', 'futures', 'global'].includes(instrument.market))
+    ? (instrument.market as MarketId)
+    : inferMarketFromSymbol(instrument?.symbol)
+  const symbol = instrument?.symbol
+  const activeMarket: MarketId = market ?? 'crypto'
+
+  const colorMode = useSyncExternalStore(colorModeStore.subscribe, colorModeStore.getSnapshot)
+  /** 深色主题（五日级别成交量档位色与图例色块的口径，见 theme-mode.ts）。 */
+  const dark = useDarkTheme()
+  // 各市场当前路由 provider 与能力并集（市场级缓存，禁止按标的探测）：能力三态与跨源
+  // 合流判定的唯一输入。
+  const providers = useMarketProviders()
+  const capabilities = useMarketCapabilities()
+  const fiveDayCap = fiveDayCapability(activeMarket, capabilities[activeMarket])
+  useEffect(() => { void ensureMarketProviders() }, [])
+  // 数值紧凑单位 locale（亿/万 vs K/M/B）：词典哨兵键判定，随语言切换响应。
+  const numLocale = scaleLocaleOf(t)
+
+  const instances = useChart(state => state.instances)
+  // symbol visibility：按标的可见实例——选择器勾选态/参数编辑/快捷词条的过滤点
+  // （隐藏 ≠ 取消激活，实例仍在名册，raw `instances` 仅供「全局移除」按钮判定存在性）。
+  const visibleInstances = useMemo(
+    () => instances.filter(instance => isInstanceVisibleOn(instance, market, symbol)),
+    [instances, market, symbol],
+  )
+  // 复选框/快捷词条共用的按标的开关（symbol visibility）：关→记隐藏；开→清隐藏；
+  // 未挂载→全局挂载；无聚焦标的（market/symbol 缺失）退回全局开关语义。
+  const toggleIndicatorVisible = (id: string): void => {
+    const raw = instances.find(candidate => candidate.id === id)
+    const isVisible = raw !== undefined && isInstanceVisibleOn(raw, market, symbol)
+    if (market === undefined || symbol === undefined) {
+      toggleIndicator(id)
+      return
+    }
+    const scopeKey = symbolScopeKey(market, symbol)
+    if (isVisible) setIndicatorVisible(id, false, scopeKey)
+    else if (raw !== undefined) setIndicatorVisible(id, true, scopeKey)
+    else {
+      toggleIndicator(id)
+      // 决策 7：挂载那一刻补写默认适用范围（只在此刻写——用户在适用范围面板把级别
+      // 改成「全部支持级别」时条目会被归一删除，事后补写会覆盖用户的显式选择）。
+      // 默认值取自 definition.defaultApplyScope（与宿主两条创建路径同一个家）。
+      for (const entry of defaultScopeEntries(indicators.get(id))) setIndicatorScope(id, entry.market, entry.scope)
+    }
+  }
+  // 指标名册修订号：插件晚于首帧合并 definition 时触发重渲染。
+  const rosterVersion = useSyncExternalStore(indicators.subscribe, indicators.getVersion)
+
+  // 自定义指标加载失败态（模块级 store，见 indicator-load.ts）：失败可不可见只由
+  // 这一份状态决定——选择器内的一行提示 + 「重试」按钮（2026-10-14 KDAS 案）。
+  const indicatorLoadFailure = useSyncExternalStore(subscribeIndicatorLoad, readIndicatorLoadFailure)
+
+  const [chartInterval, setIntervalFor] = useState<string>(() => {
+    if (market === undefined) return '1d'
+    return readInterval(market)
+  })
+  const [daily, setDaily] = useState<Kline[] | null>(null)
+  const [klines, setKlines] = useState<Kline[] | null>(null)
+  /** klines 所属级别：切级别后旧的上一级别数据在途期间不得被当成新级别数据消费
+   * （五日级别尤其致命——拿日 K 当 1m 分组会算出假的量比档位）。 */
+  const [klinesInterval, setKlinesInterval] = useState<string | null>(null)
+  /** 当前 klines 序列的供数源（桥在 klines 响应里标注；普通级别不跟踪 = undefined）。
+   * 五日级别跨源时 ticker 必须向同一源取价，见 fiveDayTickerProvider。 */
+  const [klinesProvider, setKlinesProvider] = useState<string | undefined>(undefined)
+  const [kError, setKError] = useState<string | null>(null)
+  const [ticker, setTicker] = useState<Ticker | null>(null)
+  const [hoverIndex, setHoverIndex] = useState<number | null>(null)
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [editingIndicator, setEditingIndicator] = useState<string | null>(null)
+  /**
+   * 适用范围过滤（唯一读侧判据）：指标自身已启用（在名册）+ 当前市场已开启 +
+   * 当前 K 线级别已选中，三者同时满足才进图表计算与绘制。选择器勾选态/参数编辑
+   * 仍消费 visibleInstances（适用范围是「当前市场/级别是否应用」，不是取消激活）；
+   * 主图与副图同源——TvChart 的 mainRefs/subRefs 结构 diff 会随本集合收缩而
+   * removeSeries（空副图 pane 由 lightweight-charts 自动摘除），故切回即恢复。
+   */
+  const applicableInstances = useMemo(
+    () => selectApplicableInstances(visibleInstances, market, chartInterval),
+    [visibleInstances, market, chartInterval],
+  )
+  /**
+   * KDAS 关键日右键菜单：null = 关闭。x/y 为 TvChart 容器系的原始命中坐标；
+   * placed 为量测钳位后的最终落点（null = 待量测，先隐藏渲染防右缘溢出闪现）。
+   */
+  const [kdasMenu, setKdasMenu] = useState<{ index: number; x: number; y: number; placed: { x: number; y: number } | null } | null>(null)
+  const chartBoxRef = useRef<HTMLDivElement | null>(null)
+  /** 行情板块页签（图表 | 基本面 | 新闻 | 公告）：跨标的保持。 */
+  const [stageTab, setStageTab] = useState<'chart' | 'derivatives' | 'fundamentals' | 'news' | 'announcements'>('chart')
+  // 渲染期页签归一（issue #54 评审 L3）：衍生品页签是 crypto 专属，切到非 crypto
+  // 市场时渲染直接按图表页签处理——不等 useEffect 纠偏（paint 后才跑会闪一帧公告）。
+  // 基本面页签反向收敛（2026-09-04）：加密资产无标准财报矩阵，crypto 不再展示基本面，
+  // 残留的 fundamentals 页签同样渲染期归一到图表。
+  const viewTab =
+    (stageTab === 'derivatives' && market !== 'crypto') || (stageTab === 'fundamentals' && market === 'crypto')
+      ? 'chart'
+      : stageTab
+  /** 衍生品指标快照（issue #38，crypto 专属；null = 未实现/失败 → 面板整体隐藏）。 */
+  const [derivatives, setDerivatives] = useState<DerivativesData | null>(null)
+  /** 衍生品历史序列（issue #54；页签激活才拉；null = 未实现/失败 → 趋势卡隐藏）。 */
+  const [derivativesHistory, setDerivativesHistory] = useState<DerivativesHistory | null>(null)
+  /** 历史首个应答是否已落地（区分「加载中」与「不可用」，评审 L2）。 */
+  const [derivativesHistoryLoaded, setDerivativesHistoryLoaded] = useState(false)
+  /** 盘口竖栏（issue #39）：开关跨标的/会话记忆；数据 null = 数据源未提供（降级提示）。 */
+  const [orderbookOpen, setOrderbookOpen] = useState<boolean>(() => readOrderbookOpen())
+  const [orderbook, setOrderbook] = useState<Orderbook | null>(null)
+  const [orderbookLoading, setOrderbookLoading] = useState(false)
+  const [trades, setTrades] = useState<TradeTick[] | null>(null)
+  /** 交易工作台（issue #40）：默认关（安全敏感面）；只读数据 null = 服务未挂载/凭证缺失。 */
+  // 交易功能已按需求下线：开关与下单面板都不再渲染，状态恒为 false（保留 setter 供旧调用点编译）。
+  const [tradeDeskOpen, setTradeDeskOpen] = useState<boolean>(false)
+  /** 右侧栏资产面板（2026-09-05 起取代底部资产抽屉）：默认展开，开关跨会话记忆。 */
+  const [tradePositions, setTradePositions] = useState<Position[] | null>(null)
+  const [tradeBalances, setTradeBalances] = useState<AccountBalance[] | null>(null)
+  const [tradeOrders, setTradeOrders] = useState<Order[] | null>(null)
+  const [tradeFills, setTradeFills] = useState<TradeFill[] | null>(null)
+  /** 交易面不可用原因（2026-09-04）：positions 为探针，区分「市场未挂交易连接器」与「凭证缺失」。 */
+  // positions 仍作探针以驱动 reason 分类（balances 列展示用）；持仓/汇总面已
+  // 迁右缘资产面板（holdings-store 自管数据），不再消费这里的 reason。
+  const [, setTradeDataReason] = useState<TradeRowsReason>('unavailable')
+  const [, setBalancesDataReason] = useState<TradeRowsReason>('unavailable')
+
+  /** 全局交易模式（trade-mode-store 单例：右栏资产面板跨树共享同一份；
+   *  issue #65 契约 §6.4 缺省 paper 语义由 store 承载）。 */
+  const tradeMode = useSyncExternalStore(tradeModeStore.subscribe, tradeModeStore.getSnapshot)
+
+  // 监听模拟账本变动
+  const [paperTick, setPaperTick] = useState(0)
+  useEffect(() => {
+    return paperTradingStore.subscribe(() => {
+      setPaperTick((t) => t + 1)
+    })
+  }, [])
+
+  const handleToggleTradeMode = (mode: 'live' | 'paper') => {
+    writeTradeMode(mode)
+    if (mode === 'paper') {
+      // 切换到模拟盘时，若交易台未开，自动打开方便体验
+      if (!tradeDeskOpen) {
+        setTradeDeskOpen(true)
+        writeTradeDeskOpen(true)
+      }
+    }
+  }
+
+  // 标的行情价格变动时实时更新模拟持仓浮盈
+  useEffect(() => {
+    if (ticker?.price && symbol) {
+      paperTradingStore.updatePrices({ [symbol]: ticker.price })
+    }
+  }, [ticker?.price, symbol])
+
+  const activePositions = tradeMode === 'paper' ? paperTradingStore.getPositions() : tradePositions
+  const activeBalances = tradeMode === 'paper' ? paperTradingStore.getBalances() : tradeBalances
+  const activeOrders = tradeMode === 'paper' ? paperTradingStore.getOrders() : tradeOrders
+  const activeFills = tradeMode === 'paper' ? paperTradingStore.getFills() : tradeFills
+  const paperCash = paperTradingStore.getAccount().cash
+  void paperTick // 模拟账本 subscribe 通知的重渲染驱动（paper 行直读 store）
+
+  // 当前标的持仓量与可用现金计算（供下单面板精确计算 25%/50%/75%/100% 比例填单）
+  const currentPosition = useMemo(() => {
+    if (!symbol) return undefined
+    const list = activePositions ?? []
+    return list.find((p) => p.symbol.toUpperCase() === symbol.toUpperCase() && p.side === 'long')
+  }, [symbol, activePositions])
+
+  const currentPositionSize = currentPosition?.size ?? 0
+
+  const availableCash = useMemo(() => {
+    if (tradeMode === 'paper') {
+      return paperCash
+    }
+    if (!activeBalances || activeBalances.length === 0) return 0
+    const targetAsset = activeMarket === 'crypto' ? 'USDT' : activeMarket === 'us' ? 'USD' : activeMarket === 'hk' ? 'HKD' : 'CNY'
+    const found = activeBalances.find((b) => b.asset.toUpperCase() === targetAsset.toUpperCase())
+      ?? activeBalances.find((b) => /USD|USDT|CNY|HKD|CASH/i.test(b.asset))
+      ?? activeBalances[0]
+    return found ? found.free : 0
+  }, [tradeMode, paperCash, activeBalances, activeMarket])
+  /** 区间统计：框选模式开 + 已选逻辑下标区间（TvChart 上报，面板消费）。 */
+  const [rangeMode, setRangeMode] = useState(false)
+  const [rangeSelection, setRangeSelection] = useState<{ start: number; end: number } | null>(null)
+  const markerTexts = useMemo(() => ({ entry: t('trade.buy'), exit: t('trade.sell') }), [t])
+
+  // ── 新闻与公告（issue #37）────────────────────────────────────
+  const [newsItems, setNewsItems] = useState<ClientNewsItem[] | null>(null)
+  const [newsUnavailable, setNewsUnavailable] = useState<string[]>([])
+
+  // ── K 线标记（issue #41）──────────────────────────────────────
+  const [markerStore] = useState(() => createMarkerStateStore())
+  const markerState = useSyncExternalStore(markerStore.subscribe, markerStore.getSnapshot)
+  const [markerHover, setMarkerHover] = useState<MarkerHoverInfo | null>(null)
+
+  const [indexTickers, setIndexTickers] = useState<Record<string, Ticker>>({})
+
+  const indexDefs = MARKET_INDICES[activeMarket] ?? []
+
+  // 底部大盘指数轮询：按当前激活市场拉取对应核心指数。
+  // global（金十）无常驻轮询预算 → residentPollMs 返回 null，只按需取一次。
+  usePoll(async () => {
+    if (indexDefs.length === 0) return
+    try {
+      const symbols = indexDefs.map(def => def.symbol)
+      const outcome = await fetchTickers(activeMarket, symbols)
+      const next: Record<string, Ticker> = {}
+      for (const sym of symbols) {
+        const res = outcome[sym]
+        if (res?.ok) next[sym] = res.ticker
+      }
+      setIndexTickers(next)
+    } catch {
+      /* 下轮重试 */
+    }
+  }, residentPollMs(activeMarket, TICKER_POLL_MS), [activeMarket])
+
+  // 周期记忆（每市场独立）；切标的时读该市场的上次周期。
+  useEffect(() => {
+    if (market !== undefined) setIntervalFor(readInterval(market))
+  }, [market])
+
+  // 五日级别的能力回落：记忆里的 '5d' 只有在该市场声明的能力并集能诚实提供时才保留
+  // （crypto/futures/global 与只声明 800 根 1m 的市场一律回落到日 K 并改写记忆）。
+  // 能力并集未到（unknown）时不动——不能把「还没问到」当成「不可得」。
+  useEffect(() => {
+    if (chartInterval !== FIVE_DAY_INTERVAL || fiveDayCap !== 'no') return
+    setIntervalFor('1d')
+    writeInterval(activeMarket, '1d')
+  }, [chartInterval, fiveDayCap, activeMarket])
+
+  /**
+   * 取数通路的三个 ref，声明必须在两处 poll 之前（30s resync 落地时要判源、判级别，并按
+   * 最近快照复原当日 bar）：
+   * - barSourceRef：当前 bar 序列的供数源（五日级别用取数响应标明的源，普通级别按该市场
+   *   的 active 路由）。合流判定发生在 ticker 响应回来时，必须用**那一瞬**的序列来源——
+   *   请求在途期间用户可能切了级别或换了路由，请求发出时的闭包已经不是图上那条序列的源。
+   * - barIntervalRef：图上这条序列的级别（日线族才补「当日未完成」日 K，见 ticker-bar.ts）。
+   * - lastTickerRef：最近一次 ticker 快照与它本次的取数源，供 resync 落地时复原当日 bar。
+   */
+  const barSourceRef = useRef<string | undefined>(undefined)
+  const barIntervalRef = useRef<string | null>(null)
+  const lastTickerRef = useRef<TickerSnapshot | null>(null)
+
+  // K线取数 = poll：挂载/换标的/换周期立即触发；允许常驻的市场 30s resync，
+  // global（金十 global_klines 同列 0 常驻预算）只在换标的/换周期时取一次。
+  // 五日级别（客户端视图级别）走 60s：一次约 1200-1950 根，30s 全量重取等于
+  // 把上游配额翻倍；盘中最新一根由既有 ticker 合并推进。
+  const requestRef = useRef('')
+  usePoll(async () => {
+    if (!market || !symbol) return
+    // 能力未确认（provider 未回）或明确不可得：不取数、不渲染（回落由上面的守卫负责）。
+    if (chartInterval === 'intraday') return
+    if (chartInterval === FIVE_DAY_INTERVAL && fiveDayCap !== 'yes') return
+    const request = `${market}:${symbol}:${chartInterval}`
+    requestRef.current = request
+    try {
+      // 五日级别：永远是 1m 取数 + 客户端按市场时区分组取最近 5 个交易日；响应的
+      // provider 是本次实际供数的源（可能不是当前 active 路由——按能力跨源兜底），
+      // 记下来供 ticker 同源取价与合流判定。
+      const page = chartInterval === FIVE_DAY_INTERVAL
+        ? await fetchKlinesFrom(market, symbol, '1m', FIVE_DAY_KLINE_LIMIT)
+        : undefined
+      const rows = page !== undefined
+        ? toFiveDayBars(market, page.klines).map(bar => bar.kline)
+        : await fetchKlines(market, symbol, chartInterval, chartInterval === '1d' ? DAILY_LIMIT : klineLimit(market))
+      if (requestRef.current !== request) return
+      // 全量替换前的当日 bar 复原：上游缺当日那根时，每拍 resync 都会把 ticker 补出来的当日
+      // bar 抹掉、5s 后再补回来，图上蜡烛与指标末点会周期性闪断。prev 一并传进去，让新造的
+      // 当日 bar 继承上一拍的包络——否则 high/low 每拍塌回当拍价，影线抽搐、指标读数往回跳。
+      // 源一致才复原，非日线级别与源不一致时原样落地（门控在 restoreFormingBar 内部）。
+      setKlines(prev => restoreFormingBar(rows, prev ?? [], lastTickerRef.current, barSourceRef.current, { market, interval: chartInterval }))
+      // 1d 下「日 K 参考」与这一拍是同一个 URL、同一份数据：落地时顺带喂头部昨收/涨跌的
+      // 参考序列（见下面的日K参考 effect），不再另发第二条 750 根请求。
+      if (chartInterval === '1d') setDaily(rows)
+      setKlinesInterval(chartInterval)
+      setKlinesProvider(page?.provider)
+      setKError(null)
+    } catch (error) {
+      if (requestRef.current !== request) return
+      setKError(String((error as { message?: string })?.message ?? error))
+    }
+  }, residentPollMs(market, chartInterval === FIVE_DAY_INTERVAL ? FIVE_DAY_RESYNC_MS : KLINE_RESYNC_MS), [market, symbol, chartInterval, fiveDayCap])
+
+  // 日K参考（头部涨跌/昨收）：1d 视图下参考序列就是图表序列（上面那拍已经喂过 setDaily），
+  // 不再重复取数；其它周期另取一次，每标的只拉一次。
+  useEffect(() => {
+    if (!market || !symbol || chartInterval === '1d') return
+    let cancelled = false
+    fetchKlines(market, symbol, '1d', DAILY_LIMIT)
+      .then((rows) => { if (!cancelled) setDaily(rows) })
+      .catch(() => { /* 头部统计缺省 */ })
+    return () => { cancelled = true }
+  }, [market, symbol, chartInterval])
+
+  const auxKeys = requiredAuxKeys(applicableInstances, market, id => indicators.get(id))
+  const auxState = useAuxSeries(market, symbol, auxKeys, fetchSouthboundHoldings, fetchActiveBuy)
+  const auxSeries = auxState.series
+
+  // 衍生品指标轮询（issue #38，仅 crypto；现货输入由连接器升到对应永续）。
+  // 竞态守卫（issue #54 评审 M3）：换标的后在途响应丢弃，不覆盖新标的 state。
+  const derivativesRequestRef = useRef('')
+  usePoll(async () => {
+    if (market !== 'crypto' || symbol === undefined) return
+    const request = `${market}:${symbol}`
+    derivativesRequestRef.current = request
+    const data = await fetchDerivatives(market, symbol)
+    if (derivativesRequestRef.current !== request) return
+    setDerivatives(data)
+  }, DERIVATIVES_POLL_MS, [market, symbol])
+
+  // 衍生品历史序列轮询（issue #54，仅 crypto + 衍生品页签激活）。
+  // 竞态守卫同款：5min 周期下旧标的慢响应可挂很久，必须丢弃（评审 M3）。
+  const derivativesHistoryRequestRef = useRef('')
+  usePoll(async () => {
+    if (stageTab !== 'derivatives' || market !== 'crypto' || symbol === undefined) return
+    const request = `${market}:${symbol}`
+    derivativesHistoryRequestRef.current = request
+    const history = await fetchDerivativesHistory(market, symbol)
+    if (derivativesHistoryRequestRef.current !== request) return
+    setDerivativesHistory(history)
+    // L2：首个应答落地（无论成败）即离开「加载中」，null 从此可读作「不可用」。
+    setDerivativesHistoryLoaded(true)
+  }, DERIVATIVES_HISTORY_POLL_MS, [stageTab, market, symbol])
+
+  // 盘口/分笔轮询（issue #39）：竖栏打开 + 图表页签时才拉，省上游配额。
+  usePoll(async () => {
+    if (!orderbookOpen || stageTab !== 'chart' || market === undefined || symbol === undefined) return
+    setOrderbookLoading(true)
+    try {
+      const [book, recentTrades] = await Promise.all([
+        fetchOrderbook(market, symbol),
+        fetchRecentTrades(market, symbol, 50),
+      ])
+      setOrderbook(book)
+      setTrades(recentTrades)
+    } finally {
+      setOrderbookLoading(false)
+    }
+  }, ORDERBOOK_POLL_MS, [orderbookOpen, stageTab, market, symbol])
+
+  // 交易台只读轮询（issue #40）：面板开着才拉——关着时这四个响应没有渲染消费者；
+  // 实盘例外（风险可见性优先）。positions 为主探针，服务未注册/凭证缺失都置 null。
+  const refreshTradeDesk = async (m: MarketId = activeMarket) => {
+    const [positionRows, balanceRows, orderRows, fillRows] = await Promise.all([
+      fetchTradePositions(m),
+      fetchTradeBalances(m),
+      fetchTradeOpenOrders(m),
+      fetchTradeFills(m),
+    ])
+    setTradePositions(positionRows.rows)
+    setTradeDataReason(positionRows.reason)
+    setTradeBalances(balanceRows.rows)
+    setBalancesDataReason(balanceRows.reason)
+    setTradeOrders(orderRows.rows)
+    setTradeFills(fillRows.rows)
+  }
+
+  usePoll(async () => {
+    if (stageTab !== 'chart' || (!tradeDeskOpen && tradeMode !== 'live')) return
+    await refreshTradeDesk(activeMarket)
+  }, TRADE_DESK_POLL_MS, [stageTab, activeMarket, tradeDeskOpen, tradeMode])
+
+  /**
+   * 提交意图追踪器（一次挂载各一个）：实盘动作的身份 = 官方当前会话 id +
+   * 稳定意图 id。未知结果/网络失败重试续用同一意图；参数变化、成功或主动新动作轮换。
+   */
+  const orderIntentRef = useRef<OrderIntentTracker | null>(null)
+  const cancelIntentRef = useRef<OrderIntentTracker | null>(null)
+  const orderIntentTracker = (): OrderIntentTracker => {
+    orderIntentRef.current ??= createOrderIntentTracker()
+    return orderIntentRef.current
+  }
+  const cancelIntentTracker = (): OrderIntentTracker => {
+    cancelIntentRef.current ??= createOrderIntentTracker()
+    return cancelIntentRef.current
+  }
+
+  const onSubmitGuiOrder = async (input: Parameters<typeof placeGuiOrder>[1]): Promise<Awaited<ReturnType<typeof placeGuiOrder>>> => {
+    if (tradeMode === 'paper') {
+      try {
+        const curPrice = ticker?.price ?? 0
+        const order = paperTradingStore.placeOrder({
+          symbol: input.symbol,
+          side: input.side,
+          type: input.type,
+          quantity: input.quantity,
+          ...(input.price !== undefined ? { price: input.price } : {}),
+          currentPrice: curPrice,
+          market: activeMarket, // issue #65：模拟持仓记录市场（统一台账盯市/币种推导）
+        })
+        setHoldingsPanelOpen(true)
+        return { order }
+      } catch (err) {
+        return { error: err instanceof Error ? err.message : String(err) }
+      }
+    }
+    // 实盘（原产品缺省，dryRun:false 保留）：带当前会话与稳定意图提交；宿主逐动作
+    // 审批没成就没有订单，拒绝码原样回到面板。
+    return submitGuiOrder({
+      market: activeMarket,
+      input,
+      sessionId: guiSessionId?.(),
+      tracker: orderIntentTracker(),
+      place: placeGuiOrder,
+    }).then((res) => {
+      // 下单成功（真交易）→ 自动展开资产面板看最新委托，并立即刷新账户面。
+      if (res.order) {
+        setHoldingsPanelOpen(true)
+        void refreshTradeDesk(activeMarket)
+      }
+      return res
+    })
+  }
+
+  // 页签市场归一（issue #54 + 2026-09-04 基本面收敛）：衍生品是 crypto 专属，基本面是
+  // 非 crypto 专属（加密资产无标准财报）——切市场越界时自动回图表页签。
+  useEffect(() => {
+    if (stageTab === 'derivatives' && market !== 'crypto') setStageTab('chart')
+    if (stageTab === 'fundamentals' && market === 'crypto') setStageTab('chart')
+  }, [stageTab, market])
+
+  /** GUI 撤单：与下单同门槛（官方当前会话 + 稳定意图 + 宿主逐动作审批）。 */
+  const onCancelGuiOrder = async (orderId: string, sym?: string): Promise<boolean> => {
+    const ok = await submitGuiCancel({
+      market: activeMarket,
+      orderId,
+      symbol: sym,
+      sessionId: guiSessionId?.(),
+      tracker: cancelIntentTracker(),
+      cancel: cancelGuiOrder,
+    })
+    if (ok) {
+      void refreshTradeDesk(activeMarket)
+    }
+    return ok
+  }
+
+  // 换标的：立即清场
+  useEffect(() => {
+    setKlines(null)
+    setKlinesInterval(null)
+    setKlinesProvider(undefined)
+    // 上一只标的的快照不得被新标的的重取落地复原——换标的后等新标的自己的 ticker。
+    lastTickerRef.current = null
+    setDaily(null)
+    setTicker(null)
+    setHoverIndex(null)
+    setKError(null)
+    setDerivatives(null)
+    setDerivativesHistory(null)
+    setDerivativesHistoryLoaded(false)
+    setOrderbook(null)
+    setTrades(null)
+    setNewsItems(null)
+    setNewsUnavailable([])
+    setMarkerHover(null)
+  }, [market, symbol])
+
+  // 三处取数共用的 ref，赋值点紧邻 activeProvider（下面的推导要有 providers 与状态）：
+  // barSourceRef / barIntervalRef 供 ticker 合并判源与判级别，lastTickerRef 供 resync 复原当日 bar。
+  const activeProvider = market === undefined ? undefined : providers[market]
+  barSourceRef.current = klinesInterval === FIVE_DAY_INTERVAL ? (klinesProvider ?? activeProvider) : activeProvider
+  barIntervalRef.current = klinesInterval
+
+  // ticker 轮询：头部价格 + 尾随合并最后一根 K 线。global 按需（见 quote-budget.ts）。
+  // 五日级别的 bar 来自非 active 的源（按能力跨源兜底）时，该级别的价格也向同一源取，
+  // 否则两个源会混进同一根 bar；bar 源与 active 相同时不多发一个请求——始终只有这一条
+  // ticker 轮询，只是它按当前级别选源。
+  usePoll(async () => {
+    if (market === undefined || symbol === undefined) return
+    const active = providers[market]
+    const barProvider = klinesInterval === FIVE_DAY_INTERVAL ? klinesProvider : undefined
+    const requestProvider = fiveDayTickerProvider(barProvider, active)
+    try {
+      const outcome = await fetchTickers(market, [symbol], requestProvider)
+      const result = outcome[symbol]
+      if (result?.ok) {
+        // 合并判据：图上这条序列解析出的源与 ticker 本次取数的源一致才合并；任一端未知
+        // 时维持现行 5s 合并行为——「还没问到」不等于「不同源」。
+        const tickerSource = requestProvider ?? active
+        // 记下这一拍的快照与源：resync 全量重取落地时用它复原当日未完成 bar。
+        lastTickerRef.current = { ticker: result.ticker, source: tickerSource }
+        setTicker(result.ticker)
+        if (!tickerBarMergeable(barSourceRef.current, tickerSource)) return
+        setKlines(prev => prev === null ? prev : withTickerBar(prev, result.ticker, { market, interval: barIntervalRef.current }))
+      }
+    } catch { /* 下轮再试 */ }
+  }, residentPollMs(market, TICKER_POLL_MS), [market, symbol])
+
+  // 新闻情报流轮询（issue #37）：处于 news/announcements 或开启事件图钉时 60s 轮询；symbol/market 变化时立即重拉。
+  const NEWS_POLL_MS = 60000
+  const newsRequestRef = useRef('')
+  usePoll(async () => {
+    if ((stageTab !== 'news' && stageTab !== 'announcements' && !markerState.showKnowledgeEvents) || market === undefined || symbol === undefined) return
+    const request = `${market}:${symbol}`
+    newsRequestRef.current = request
+    try {
+      const result = await fetchNews(market, symbol, 50)
+      // 竞态守卫：慢响应回来时已切标的 → 丢弃，旧新闻不得覆盖新标的（对齐 klines poll 的 requestRef 模式）。
+      if (newsRequestRef.current !== request) return
+      if (result !== null) {
+        setNewsItems(result.items)
+        setNewsUnavailable(result.unavailable)
+      }
+    } catch { /* 下轮重试 */ }
+  }, NEWS_POLL_MS, [market, symbol, stageTab, markerState.showKnowledgeEvents])
+
+  const stats = useMemo(() => {
+    const last = daily !== null && daily.length > 0 ? daily[daily.length - 1] : undefined
+    const klinePrevClose = daily !== null && daily.length >= 2 ? daily[daily.length - 2]?.close : undefined
+    // 昨收/涨跌优先用快照官方锚点（ticker.prevClose/changePercent）：
+    // 日 K 序列可能缺最新收盘 bar（Yahoo 补齐滞后，见 connector-yahoo），倒数第二根
+    // 会错位一个交易日（2026-09-01 AAPL 实证：显示 314.58 而非 319.70）。
+    const prevClose = ticker?.prevClose ?? klinePrevClose
+    const price = ticker?.price ?? klines?.[klines.length - 1]?.close
+    const change = price !== undefined && prevClose !== undefined ? price - prevClose : undefined
+    const pct = ticker?.changePercent ?? changePercent(price, prevClose)
+    return { last, prevClose, price, change, pct }
+  }, [daily, ticker, klines])
+
+  // 区间统计：框选模式 ESC 退出（连同清空选区）。
+  useEffect(() => {
+    if (!rangeMode) return
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      setRangeMode(false)
+      setRangeSelection(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [rangeMode])
+
+  // KDAS 关键日菜单：Esc / 外点关闭（HomeHistory 行菜单同款三路关闭）。
+  useEffect(() => {
+    if (kdasMenu === null) return
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setKdasMenu(null)
+    }
+    const onPointerDown = (event: PointerEvent): void => {
+      if (event.target instanceof Node && kdasMenuRef.current?.contains(event.target)) return
+      setKdasMenu(null)
+    }
+    window.addEventListener('keydown', onKey)
+    document.addEventListener('pointerdown', onPointerDown, true)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      document.removeEventListener('pointerdown', onPointerDown, true)
+    }
+  }, [kdasMenu])
+
+  /**
+   * 五日级别显示档位（滚轮换档，1..5 个交易日，默认 1 个）：档位只决定图上画几段，
+   * 不参与量比计算——比较窗口恒为取数落地的最近 5 个交易日（见 five-day-series
+   * 模块头注释）。会话内记住上次档位，重挂载回默认档。
+   */
+  const [fiveDayDays, setFiveDayDays] = useState<number>(FIVE_DAY_DEFAULT_DAYS)
+  const stepFiveDayDays = useCallback((delta: -1 | 1): void => {
+    setFiveDayDays(current => clampFiveDayDays(current + delta))
+  }, [])
+
+  /**
+   * 五日级别视图（客户端纯计算）：量比档位 + 日界，恒为比较窗口的 5 个交易日。
+   * klines 已是窗口内 5 个交易日的 1m bar（取数处截取），这里只做同分钟对齐与分档。
+   */
+  const fiveDayBars = useMemo(
+    () => (chartInterval === FIVE_DAY_INTERVAL && klinesInterval === FIVE_DAY_INTERVAL && klines !== null
+      ? toFiveDayBars(activeMarket, klines)
+      : null),
+    [chartInterval, klinesInterval, klines, activeMarket],
+  )
+
+  /**
+   * 图表实际消费的序列：五日级别按档位截取比较窗口尾部 N 段，其余级别原样。
+   * fiveDayBars 与 klines 一一对齐（同一批 bar、同序），故下标区间可直接切片——
+   * 十字光标下标、框选区间与指标调度都以「图表喂进去的那条序列」为坐标系，
+   * 一律不能再混用未截断的 klines。
+   */
+  const seriesKlines = useMemo(() => {
+    if (klines === null || fiveDayBars === null) return klines
+    const range = fiveDayDisplayRange(fiveDayBars, fiveDayDays)
+    // 常规情形两者等长（同一批 bar）；ticker 合并跨日多出一根时 fiveDayBars 仍是
+    // 最近 5 日，故按长度差补偿后再切，不让这种瞬态把窗口整体错位一根。
+    const offset = klines.length - fiveDayBars.length
+    if (range.start === 0 && offset === 0) return klines
+    return klines.slice(range.start + offset, range.end + offset)
+  }, [klines, fiveDayBars, fiveDayDays])
+
+  /**
+   * 图表实际消费的五日窗口：档位色（barAux）与日界同源同窗口，数组与 seriesKlines
+   * 逐根对齐。成交量档位由 `vol` 指标经逐根通道自带，图表侧只收日界。
+   */
+  const fiveDayWindow = useMemo(() => {
+    if (fiveDayBars === null || fiveDayBars.length === 0) return null
+    const range = fiveDayDisplayRange(fiveDayBars, fiveDayDays)
+    return fiveDayBars.slice(range.start, range.end)
+  }, [fiveDayBars, fiveDayDays])
+
+  /** 图表侧五日视图：只给显示窗口内的日界（秒），数组与 seriesKlines 逐根对齐。 */
+  const fiveDayProps = useMemo(
+    () => (fiveDayWindow === null ? undefined : { dayStarts: fiveDayDayStarts(fiveDayWindow).map(ms => Math.floor(ms / 1000)) }),
+    [fiveDayWindow],
+  )
+
+  /**
+   * 调度侧逐根通道：五日窗口的档位编码成与 seriesKlines 等长的序列注入 `vol`。只在
+   * 五日级别构造（其余级别 fiveDayBars 为 null → 不传 barAux，走 compute）。
+   */
+  const fiveDayBarAux = useMemo(
+    () => (fiveDayWindow === null ? undefined : fiveDayVolumeTierBarAux(fiveDayWindow.map(bar => bar.tier))),
+    [fiveDayWindow],
+  )
+
+  /**
+   * 滚轮换档的接线只在真正的五日级别路由下成立（不可得的路由已被守卫回落为日K）。
+   * 与数据是否到位无关：换级别后 1m 在途的那一瞬，滚轮仍应换档而不是缩放。
+   */
+  const fiveDayWheel = chartInterval === FIVE_DAY_INTERVAL && fiveDayCap === 'yes' ? stepFiveDayDays : undefined
+
+  const rangeStats = useMemo(
+    () => (rangeSelection !== null && seriesKlines !== null ? computeRangeStats(seriesKlines, rangeSelection.start, rangeSelection.end) : null),
+    [rangeSelection, seriesKlines],
+  )
+
+  /* ---- KDAS 关键日右键菜单 ---- */
+
+  const kdasMenuRef = useRef<HTMLDivElement | null>(null)
+  const kdasInstance = applicableInstances.find(instance => instance.id === KDAS_ID)
+  // 菜单启用守卫：聚焦标的 + 日 K 周期 + KDAS 已激活、对当前标的可见且在当前市场/级别适用。
+  const kdasMenuEnabled = market !== undefined && symbol !== undefined && !INTRADAY_INTERVALS.has(chartInterval) && kdasInstance !== undefined
+  const kdasScopeParams = kdasInstance !== undefined && market !== undefined && symbol !== undefined
+    ? effectiveInstanceParams(kdasInstance, market, symbol)
+    : undefined
+  /** 右键命中柱 → 菜单动作面（存储口径 UTC 取日，显示标签走本地口径）。 */
+  const openKdasMenu = useCallback((info: { index: number; x: number; y: number }): boolean => {
+    if (!kdasMenuEnabled || seriesKlines === null || seriesKlines[info.index] === undefined) return false
+    setKdasMenu({ ...info, placed: null })
+    return true
+  }, [kdasMenuEnabled, seriesKlines])
+
+  // 菜单钳位：挂载帧量测真实尺寸 → clampRectInto 收进图表容器（右缘/下缘越界平移）。
+  // 全程容器系：style 的 left/top 相对 chartBox，outer 只取尺寸（原点归零），坐标不做视口混算。
+  useLayoutEffect(() => {
+    if (kdasMenu === null || kdasMenu.placed !== null) return
+    const menuEl = kdasMenuRef.current
+    const boxEl = chartBoxRef.current
+    if (menuEl === null || boxEl === null) return
+    const menuRect = menuEl.getBoundingClientRect()
+    const placed = clampRectInto(
+      { x: kdasMenu.x, y: kdasMenu.y, width: menuRect.width, height: menuRect.height },
+      { x: 0, y: 0, width: boxEl.clientWidth, height: boxEl.clientHeight },
+    )
+    setKdasMenu((prev) => (prev === null || prev.placed !== null ? prev : { ...prev, placed }))
+  }, [kdasMenu])
+
+  const applyKdasParams = useCallback((params: Record<string, number>): void => {
+    if (market === undefined || symbol === undefined) return
+    setIndicatorParams(KDAS_ID, params, symbolScopeKey(market, symbol))
+  }, [market, symbol, setIndicatorParams])
+
+  const kdasAddDay = useCallback((day: number): void => {
+    // 未挂载实例时 setParams(scopeKey) 的桥/本地语义即「建实例（全局 schema 默认）
+    // + 写本标的覆盖」，挂载与追加天然合一；始终写覆盖，不污染全局 params。
+    const result = addKdasDay(kdasScopeParams ?? {}, day)
+    if (result.ok) applyKdasParams(result.params)
+  }, [kdasScopeParams, applyKdasParams])
+
+  const kdasRemoveDay = useCallback((day: number): void => {
+    if (kdasScopeParams === undefined) return
+    const result = removeKdasDay(kdasScopeParams, day)
+    if (result.ok) applyKdasParams(result.params)
+  }, [kdasScopeParams, applyKdasParams])
+
+  // 指标调度：适用实例 × 图表序列 × 外部序列 → 渲染输入（symbol visibility + 适用范围
+  // 双重过滤后的实例才参与计算与绘制；主图与副图同规则）。声明了 aux 的实例另需外部
+  // 序列就绪，否则整体不进调度（决策 3：副图 pane 不存在）——见 indicator-dispatch。
+  const indicatorGroups = useMemo(() => {
+    if (seriesKlines === null) return []
+    return dispatchIndicatorGroups({
+      klines: seriesKlines,
+      instances: applicableInstances,
+      market,
+      symbol,
+      aux: auxSeries,
+      ...(fiveDayBarAux !== undefined ? { barAux: fiveDayBarAux } : {}),
+      liveKeys: auxState.liveKeys,
+      deps: {
+        getDefinition: id => indicators.get(id),
+        clampParams: (definition, params) => indicators.clampParams(definition, params),
+        instanceKey: instance => indicators.instanceKey(instance),
+      },
+    })
+  }, [seriesKlines, applicableInstances, rosterVersion, market, symbol, auxSeries, auxState.liveKeys, fiveDayBarAux])
+
+  const mainOverlays = useMemo(() => indicatorGroups.filter(group => group.pane === 'main'), [indicatorGroups])
+  // 副图组的空态文案在这里落地（词典只属于 UI 层，dispatch 只给数据域键位）：
+  // 占位组的 outputs 恒为空，TvChart 据此建一个只带标题行理由的 pane。
+  const subIndicators = useMemo(() => indicatorGroups
+    .filter(group => group.pane === 'sub')
+    .map(group => ({
+      key: group.key,
+      title: group.title,
+      outputs: group.outputs,
+      ...(group.live !== undefined ? { live: group.live } : {}),
+      ...(group.auxEmptyKey !== undefined ? { emptyNotice: t(auxEmptyNoticeKey(group.auxEmptyKey)) } : {}),
+    })), [indicatorGroups, t])
+
+  const bars = useMemo(() => seriesKlines?.map(toBar) ?? [], [seriesKlines])
+
+  const readoutIndex = hoverIndex ?? (seriesKlines !== null && seriesKlines.length > 0 ? seriesKlines.length - 1 : null)
+  const readoutCandle = seriesKlines !== null && readoutIndex !== null ? seriesKlines[readoutIndex] : undefined
+  // 读数行昨收跟随十字光标：悬停历史K线取当前周期序列的前一根收盘价（日K下即该日
+  // 昨收）；未悬停或悬停最新一根沿用官方锚点 ticker.prevClose（日K补齐滞后时序列
+  // 倒数第二根会错位一个交易日，见上方 stats 注释）；序列首根无前一根则留空。
+  const readoutPrevClose = seriesKlines === null || readoutIndex === null
+    ? stats.prevClose
+    : readoutIndex <= 0
+      ? undefined
+      : readoutIndex >= seriesKlines.length - 1
+        ? stats.prevClose
+        : seriesKlines[readoutIndex - 1]?.close
+
+  // 所有当前市场可用的指标（供底部词条栏横向快捷展示；决策 5：definition.markets
+  // 白名单过滤，如港股通持股比例不出现在 crypto/us/cn 的词条带）
+  const allDefinitions = useMemo(() => availableDefinitions(indicators.list(), market), [rosterVersion, market])
+
+  // 策略信号标记数据（issue #41）：在当前 K 线序列上实时计算 EMA(12, 26) 交叉信号（过滤预热期与边缘噪音）。
+  const signalMarkers = useMemo<readonly ChartSignalMarkerInput[] | undefined>(() => {
+    if (!bars || bars.length < 30) return undefined
+    const cur = CURRENCY_SYMBOL[activeMarket]
+    const k12 = 2 / (12 + 1)
+    const k26 = 2 / (26 + 1)
+    let ema12 = bars[0]?.close ?? 0
+    let ema26 = bars[0]?.close ?? 0
+    const signals: ChartSignalMarkerInput[] = []
+    let prevDiff: number | null = null
+
+    for (let i = 0; i < bars.length; i++) {
+      const bar = bars[i]
+      if (!bar) continue
+      ema12 = bar.close * k12 + ema12 * (1 - k12)
+      ema26 = bar.close * k26 + ema26 * (1 - k26)
+      const diff = ema12 - ema26
+      if (i >= 26 && prevDiff !== null) {
+        if (prevDiff <= 0 && diff > 0) {
+          signals.push({
+            time: bar.time,
+            action: 'entry',
+            price: bar.close,
+            reason: t('marker.signal.entryReason', { cur, price: fmtPrice(bar.close) }),
+          })
+        } else if (prevDiff >= 0 && diff < 0) {
+          signals.push({
+            time: bar.time,
+            action: 'exit',
+            price: bar.close,
+            reason: t('marker.signal.exitReason', { cur, price: fmtPrice(bar.close) }),
+          })
+        }
+      }
+      prevDiff = diff
+    }
+    return signals.length > 0 ? signals : undefined
+  }, [bars, t])
+
+  // 知识事件标记数据（issue #41）：从当前标的的官方公告与知识事件中提取，按时间柱精准锚定（同 K 线柱去重聚合，避免边缘挤压）。
+  const knowledgeMarkers = useMemo<readonly ChartKnowledgeMarkerInput[] | undefined>(() => {
+    if (!newsItems || newsItems.length === 0 || !bars || bars.length === 0) return undefined
+    // 仅针对属于该标的的官方公告/交易所公报打图钉，排除泛财经媒体与宏观回退要闻
+    const announcements = newsItems.filter(it => isAnnouncementSource(it.source))
+    if (announcements.length === 0) return undefined
+
+    // 计算当前 K 线的平均周期步长（如日 K=86400s，周 K=604800s，月 K≈2592000s）
+    const barStep = bars.length > 1 ? Math.abs((bars[bars.length - 1]?.time ?? 0) - (bars[0]?.time ?? 0)) / (bars.length - 1) : 86400
+    const tolerance = Math.max(barStep * 0.8, 43200)
+    const barMap = new Map<number, { title: string; count: number; url: string }>()
+
+    for (const item of announcements) {
+      const ts = Math.floor(new Date(item.publishedAt).getTime() / 1000)
+      if (Number.isNaN(ts)) continue
+
+      let bestBarTime: number | null = null
+      let minDiff = Infinity
+      for (const bar of bars) {
+        const diff = Math.abs(bar.time - ts)
+        if (diff < minDiff && diff <= tolerance) {
+          minDiff = diff
+          bestBarTime = bar.time
+        }
+      }
+
+      if (bestBarTime !== null) {
+        const existing = barMap.get(bestBarTime)
+        if (existing) {
+          existing.count += 1
+        } else {
+          barMap.set(bestBarTime, { title: item.title, count: 1, url: item.url })
+        }
+      }
+    }
+
+    const markers: ChartKnowledgeMarkerInput[] = []
+    for (const [time, info] of barMap.entries()) {
+      markers.push({
+        time,
+        title: info.count > 1 ? t('marker.knowledge.batched', { title: info.title, count: String(info.count) }) : info.title,
+        cardId: info.url,
+        credibility: 'high',
+      })
+    }
+    return markers.length > 0 ? markers : undefined
+  }, [newsItems, bars, t])
+
+  // 空态：未选择标的（空态之后的渲染路径依赖 market/symbol 非空，提前收窄）。
+  if (market === undefined || symbol === undefined) {
+    return (
+      <div className={css.root}>
+        <div className={css.empty}>
+          <div className={css.emptyMain}>{t('quote.empty')}</div>
+          <div>{t('quote.emptyHint')}</div>
+        </div>
+      </div>
+    )
+  }
+
+  // 级别胶囊条：连接器级别 + 能力并集声明能诚实提供时的 '5d'（跨源兜底也算数）。
+  // 「分时」是视图级周期（客户端按当日 1m/5m 聚合，不是连接器周期），固定排在最前。
+  const intervals = ['intraday', ...chartIntervals(market, capabilities[market])]
+  const color = directionColor(stats.pct ?? 0, colorMode)
+
+  /**
+   * TradFi 永续明示（2026-10-08 P5）：交易所合成合约 ≠ 股票本身，且合约 24/7 报价而
+   * 标的股票有闭市时段。资产类别只信行上元数据或合并字典里的交易所元数据（不按符号猜）；
+   * 取不到资产类别就不声称 TradFi（未知按未知渲染）。
+   */
+  const tradFiPerp = symbol !== undefined && market !== undefined
+    && isTradFiPerp(rowForm({ symbol }), resolveAssetClass(market, {
+      symbol,
+      ...(instrument?.assetClass !== undefined ? { assetClass: instrument.assetClass } : {}),
+    }))
+
+  const rawName = instrument?.name
+  const isPlaceholderName = !rawName || rawName === symbol || /\(A股\)|\(港股\)/.test(rawName) // i18n-allow: 数据源占位名匹配谓词（"xx (A股)"），非 UI 文案
+  const tickerName = (ticker as { name?: string })?.name
+  const displayName = (!isPlaceholderName ? rawName : (tickerName || rawName || symbol))
+
+  return (
+    <div className={css.root} data-dshtrading-quote-stage="">
+      {/* 顶部报价头与二级 Sub-Tab 导航（图表 | 基本面） */}
+      <div className={css.header}>
+        <div className={css.ident}>
+          <span className={css.name}>{displayName}</span>
+          <span className={css.code}>{symbol}</span>
+          <span className={css.marketTag}>{t(TAB_KEY[market])}</span>
+        </div>
+        <span className={css.price} style={{ color }}>{fmtPrice(stats.price)}</span>
+        <span className={css.changes} style={{ color }}>
+          <span>{fmtChange(stats.change)}</span>
+          <span>{fmtPercent(stats.pct)}</span>
+        </span>
+        {/* 行情板块页签：图表 | 基本面 | 新闻 | 公告（富途牛牛式，页签随报价头同行）；
+            衍生品仅 crypto（issue #54），基本面仅非 crypto（加密资产无标准财报，2026-09-04） */}
+        <div className={css.stageTabs} role="tablist" aria-label="quote section">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={stageTab === 'chart'}
+            className={css.stageTab}
+            data-active={stageTab === 'chart' ? 'true' : undefined}
+            onClick={() => { setStageTab('chart') }}
+          >
+            {t('quote.tab.chart')}
+          </button>
+          {market === 'crypto' && (
+            <button
+              type="button"
+              role="tab"
+              aria-selected={stageTab === 'derivatives'}
+              className={css.stageTab}
+              data-active={stageTab === 'derivatives' ? 'true' : undefined}
+              onClick={() => { setStageTab('derivatives') }}
+            >
+              {t('quote.tab.derivatives')}
+            </button>
+          )}
+          {market !== 'crypto' && (
+            <button
+              type="button"
+              role="tab"
+              aria-selected={stageTab === 'fundamentals'}
+              className={css.stageTab}
+              data-active={stageTab === 'fundamentals' ? 'true' : undefined}
+              onClick={() => { setStageTab('fundamentals') }}
+            >
+              {t('quote.tab.fundamentals')}
+            </button>
+          )}
+          <button
+            type="button"
+            role="tab"
+            aria-selected={stageTab === 'news'}
+            className={css.stageTab}
+            data-active={stageTab === 'news' ? 'true' : undefined}
+            onClick={() => { setStageTab('news') }}
+          >
+            {t('quote.tab.news')}
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={stageTab === 'announcements'}
+            className={css.stageTab}
+            data-active={stageTab === 'announcements' ? 'true' : undefined}
+            onClick={() => { setStageTab('announcements') }}
+          >
+            {t('quote.tab.announcements')}
+          </button>
+        </div>
+        <span className={css.meta}>
+          {ticker !== null && <span>{t('quote.updated')} {fmtClock(ticker.timestamp)}</span>}
+        </span>
+
+      </div>
+
+      {/* TradFi 合约明示位（图表页签）：合成合约、非股票本身；24/7 报价 vs 股票闭市时段 */}
+      {viewTab === 'chart' && tradFiPerp && (
+        <div className={css.tradfiNotice} role="note" data-dshtrading-tradfi-notice="">
+          <span className={css.tradfiNoticeTitle}>{t('tradfi.notice.title')}</span>
+          <span className={css.tradfiNoticeDetail}>{t('tradfi.notice.detail')}</span>
+        </div>
+      )}
+
+      {/* 统计行情概览（图表页签专属：基本面页签有自己的信息网格） */}
+      {viewTab === 'chart' && (
+        <div className={css.stats}>
+          <span className={css.stat}><label>{t('quote.prevClose')}</label>{fmtPrice(readoutPrevClose)}</span>
+          <span className={css.stat}><label>{t('quote.open')}</label>{fmtPrice(readoutCandle?.open)}</span>
+          <span className={css.stat}><label>{t('quote.high')}</label>{fmtPrice(readoutCandle?.high)}</span>
+          <span className={css.stat}><label>{t('quote.low')}</label>{fmtPrice(readoutCandle?.low)}</span>
+          <span className={css.stat}><label>{t('quote.volume')}</label>{fmtCompact(readoutCandle?.volume, numLocale)}</span>
+          {market === 'crypto' && derivatives !== null && (
+            <DerivativesPane
+              t={t}
+              derivatives={derivatives}
+              colorMode={colorMode}
+              onOpenStage={() => { setStageTab('derivatives') }}
+            />
+          )}
+        </div>
+      )}
+
+      {/* 周期胶囊条 + 指标弹层按钮（图表页签） */}
+      {viewTab === 'chart' && (
+        <div className={css.toolbar}>
+          <div className={css.intervalTabs} role="tablist" aria-label="interval">
+            {intervals.map(entry => (
+              <button
+                key={entry}
+                type="button"
+                role="tab"
+                aria-selected={entry === chartInterval}
+                className={css.intervalTab}
+                data-active={entry === chartInterval ? 'true' : undefined}
+                onClick={() => {
+                  setIntervalFor(entry)
+                  writeInterval(market, entry)
+                }}
+              >
+                {t(INTERVAL_KEY[entry] ?? 'interval.1d')}
+              </button>
+            ))}
+          </div>
+
+        <div className={css.toolbarActions}>
+          {/* 盘口竖栏开关（issue #39；紧挨区间统计左侧） */}
+          <button
+            type="button"
+            className={css.pickerButton}
+            data-active={orderbookOpen ? 'true' : undefined}
+            aria-pressed={orderbookOpen}
+            onClick={() => {
+              setOrderbookOpen((open) => {
+                writeOrderbookOpen(!open)
+                return !open
+              })
+            }}
+          >
+            {t('orderbook.toggle')}
+          </button>
+          {/* 策略信号标记开关（issue #41） */}
+          <button
+            type="button"
+            className={css.pickerButton}
+            data-active={markerState.showSignals ? 'true' : undefined}
+            aria-pressed={markerState.showSignals}
+            title={t('marker.signal.toggleTitle')}
+            onClick={() => markerStore.toggleSignals()}
+          >
+            {t('marker.signal.toggle')}
+          </button>
+          {/* 知识事件图钉开关（issue #41） */}
+          <button
+            type="button"
+            className={css.pickerButton}
+            data-active={markerState.showKnowledgeEvents ? 'true' : undefined}
+            aria-pressed={markerState.showKnowledgeEvents}
+            title={t('marker.knowledge.toggleTitle')}
+            onClick={() => markerStore.toggleKnowledgeEvents()}
+          >
+            {t('marker.knowledge.toggle')}
+          </button>
+          {/* 区间统计（同花顺式框选统计；紧挨「技术指标」按钮左侧） */}
+            <button
+              type="button"
+              className={css.pickerButton}
+              data-active={rangeMode ? 'true' : undefined}
+              aria-pressed={rangeMode}
+              title={t('quote.rangeStatsHint')}
+              onClick={() => {
+                setRangeMode((open) => {
+                  if (open) setRangeSelection(null)
+                  return !open
+                })
+              }}
+            >
+              {t('quote.rangeStats')}
+            </button>
+            <div className={css.indicatorAnchor}>
+              <button
+                type="button"
+                className={css.pickerButton}
+                aria-expanded={pickerOpen}
+                aria-haspopup="dialog"
+                onClick={() => { setPickerOpen(open => !open) }}
+              >
+                <IconIndicators size={13} />
+                {t('indicator.picker')}
+              </button>
+              {pickerOpen && (
+                <IndicatorPicker
+                  t={t}
+                  market={market}
+                  instances={visibleInstances}
+                  activeInstances={instances}
+                  editingIndicator={editingIndicator}
+                  scopeKey={market !== undefined && symbol !== undefined ? symbolScopeKey(market, symbol) : undefined}
+                  symbolLabel={symbol}
+                  loadFailure={indicatorLoadFailure}
+                  onRetryLoad={() => { customIndicatorLoader.reload() }}
+                  onToggle={(id) => {
+                    toggleIndicatorVisible(id)
+                    setEditingIndicator(null)
+                  }}
+                  onEdit={(id) => { setEditingIndicator(current => current === id ? null : id) }}
+                  onSetScope={(id, target, scope) => { setIndicatorScope(id, target, scope) }}
+                  onApply={(id, params) => {
+                    // issue #72：当前标的已有参数覆盖 → 写覆盖；否则写全局 params。
+                    const scopeKey = market !== undefined && symbol !== undefined ? symbolScopeKey(market, symbol) : undefined
+                    const instance = visibleInstances.find(candidate => candidate.id === id)
+                    const hasOverride = scopeKey !== undefined && instance?.symbolParams?.[scopeKey] !== undefined
+                    setIndicatorParams(id, params, hasOverride ? scopeKey : undefined)
+                    setEditingIndicator(null)
+                  }}
+                  onRemoveGlobal={(id) => {
+                    removeIndicator(id)
+                    setEditingIndicator(null)
+                  }}
+                  onDelete={(id) => { void deleteIndicator(id) }}
+                  onClose={() => {
+                    setPickerOpen(false)
+                    setEditingIndicator(null)
+                  }}
+                />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 主图指标悬停/最新读数分量（各分量独立着色）。VOL/MACD 等副图指标
+          的读数在 TvChart 各自 pane 内渲染，不进主图读数行。
+          布局契约：本行是流内元素，行数即下方图表容器高度——项目数与每项宽度
+          必须与十字光标位置无关，否则悬停跨过指标锚点时整图跳动（见
+          indicator-readout.ts 模块头注）。 */}
+      {viewTab === 'chart' && mainOverlays.length > 0 && (
+        <div className={css.indicatorReadout}>
+          {readoutItems(mainOverlays, readoutIndex).map(item => (
+            <span key={item.key} style={{ color: item.color, fontWeight: 500 }}>
+              {item.title} {item.label}:{' '}
+              <span className={css.readoutValue} style={{ minWidth: `${item.width}ch` }}>{item.text}</span>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {viewTab === 'chart' && kError !== null && <div className={css.error}>{t('quote.loadFailedColon', { error: kError })}</div>}
+
+      {/* 图表主舞台 / 基本面页签（互斥挂载）；crypto 图表下方挂衍生品指标条（issue #38），
+          右侧可折叠盘口竖栏（issue #39） */}
+      {viewTab === 'chart' ? (
+        <div className={css.chartRow}>
+          <div className={css.chartColumn}>
+            <div className={css.chartBox} ref={chartBoxRef}>
+            {chartInterval === 'intraday' && market !== undefined && symbol !== undefined ? (
+              <IntradayChart
+                market={market}
+                symbol={symbol}
+                prevClose={stats.prevClose}
+                colorMode={colorMode}
+                t={t}
+              />
+            ) : null}
+            {chartInterval !== 'intraday' && klines !== null && bars.length > 0 && (
+              <TvChart
+                bars={bars}
+                dataKey={`${market}:${symbol}:${chartInterval}`}
+                intraday={INTRADAY_INTERVALS.has(chartInterval)}
+                {...(fiveDayProps !== undefined ? { fiveDay: fiveDayProps } : {})}
+                {...(fiveDayProps !== undefined && stats.prevClose !== undefined ? { percentRef: stats.prevClose } : {})}
+                onFiveDayWheel={fiveDayWheel}
+                colorMode={colorMode}
+                mainOverlays={mainOverlays}
+                subIndicators={subIndicators}
+                readoutIndex={readoutIndex}
+                onHoverIndex={setHoverIndex}
+
+                rangeSelectionMode={rangeMode}
+                selection={rangeSelection}
+                onRangeSelect={setRangeSelection}
+                signalMarkers={markerState.showSignals ? signalMarkers : undefined}
+                knowledgeMarkers={markerState.showKnowledgeEvents ? knowledgeMarkers : undefined}
+                onMarkerHover={setMarkerHover}
+                markerTexts={markerTexts}
+                liveText={t('indicator.live')}
+                onBarContextMenu={openKdasMenu}
+              />
+            )}
+            {kdasMenu !== null && seriesKlines !== null && market !== undefined && symbol !== undefined && (() => {
+              const hitBar = seriesKlines[kdasMenu.index]
+              if (hitBar === undefined) return null
+              // 守卫期（实例中途被摘/切标的）参数缺席 → 空表（菜单项自然退化为挂载/新增）。
+              const params = kdasScopeParams ?? {}
+              const slots = kdasSlots(params)
+              // 命中柱交易日：取存储口径（与 compute 同源的 UTC 日）；标题显示走本地日。
+              const barDay = utcDayNum(hitBar.openTime)
+              const anchorDay = kdasAnchorSourceDay(params, seriesKlines, barDay)
+              const full = slots.length >= 8 && !isKdasDay(params, barDay)
+              const mountedHere = kdasInstance !== undefined
+              const colorOfDay = (kd: number): string =>
+                mainOverlays.find(group => group.id === KDAS_ID)
+                  ?.outputs.find(output => output.key === kdasOutputKey(kd))?.color ?? '#8e95a3'
+              // placed=null = 量测帧：真实尺寸渲染但隐藏（visibility），不闪现原始位置。
+              const placedStyle = kdasMenu.placed !== null
+                ? { left: kdasMenu.placed.x, top: kdasMenu.placed.y }
+                : { left: kdasMenu.x, top: kdasMenu.y, visibility: 'hidden' as const }
+              return (
+                <div
+                  ref={kdasMenuRef}
+                  className={css.kdasMenu}
+                  style={placedStyle}
+                  onContextMenu={(event) => { event.preventDefault() }}
+                >
+                  <div className={css.kdasMenuTitle}>
+                    {t('kdas.menu.title', { date: fmtDay(hitBar.openTime) })}
+                  </div>
+                  {!mountedHere && (
+                    <button type="button" className={css.kdasMenuItem} onClick={() => { setKdasMenu(null); kdasAddDay(barDay) }}>
+                      {t('kdas.menu.mount')}
+                    </button>
+                  )}
+                  {mountedHere && anchorDay !== null && (
+                    <button type="button" className={css.kdasMenuItem} onClick={() => { setKdasMenu(null); kdasRemoveDay(anchorDay) }}>
+                      {t('kdas.menu.remove', { date: formatKdasDay(anchorDay) })}
+                    </button>
+                  )}
+                  {mountedHere && anchorDay === null && (
+                    <button
+                      type="button"
+                      className={css.kdasMenuItem}
+                      disabled={full}
+                      title={full ? t('kdas.menu.full') : undefined}
+                      onClick={() => { setKdasMenu(null); kdasAddDay(barDay) }}
+                    >
+                      {t('kdas.menu.add', { date: formatKdasDay(barDay) })}
+                    </button>
+                  )}
+                  {mountedHere && slots.length > 0 && (
+                    <>
+                      <div className={css.kdasMenuGroup}>{t('kdas.menu.listTitle')}</div>
+                      {slots.map(({ slot, kd }) => (
+                        <button key={slot} type="button" className={css.kdasMenuItem} onClick={() => { setKdasMenu(null); kdasRemoveDay(kd) }}>
+                          <span className={css.kdasMenuDot} style={{ background: colorOfDay(kd) }} />
+                          <span className={css.kdasMenuDate}>{formatKdasDay(kd)}</span>
+                          <span className={css.kdasMenuAction}>{t('kdas.menu.removeShort')}</span>
+                        </button>
+                      ))}
+                    </>
+                  )}
+                  {mountedHere && (
+                    <div className={css.kdasMenuHint}>{slots.length}/8 · {t('kdas.menu.hint')}</div>
+                  )}
+                </div>
+              )
+            })()}
+            {rangeMode && rangeStats !== null && (
+              <div className={css.rangePanel} role="dialog" aria-label={t('quote.rangeStats')}>
+                <div className={css.rangePanelHead}>
+                  <span>{t('quote.rangeStats')}</span>
+                  <button
+                    type="button"
+                    className={css.rangePanelClose}
+                    aria-label={t('range.closePanel')}
+                    onClick={() => { setRangeSelection(null) }}
+                  >
+                    ×
+                  </button>
+                </div>
+                <div className={css.rangePanelSpan}>
+                  {fmtDay(rangeStats.startTime)} ~ {fmtDay(rangeStats.endTime)}
+                </div>
+                <div className={css.rangePanelRow}>
+                  <span>{t('range.change')}</span>
+                  <span style={{ color: directionColor(rangeStats.changePercent, colorMode) }}>
+                    {fmtPercent(rangeStats.changePercent)}
+                  </span>
+                </div>
+                <div className={css.rangePanelRow}>
+                  <span>{t('range.changeAbs')}</span>
+                  <span style={{ color: directionColor(rangeStats.change, colorMode) }}>
+                    {fmtChange(rangeStats.change)}
+                  </span>
+                </div>
+                <div className={css.rangePanelRow}>
+                  <span>{t('range.high')}</span>
+                  <span>{fmtPrice(rangeStats.rangeHigh)}</span>
+                </div>
+                <div className={css.rangePanelRow}>
+                  <span>{t('range.low')}</span>
+                  <span>{fmtPrice(rangeStats.rangeLow)}</span>
+                </div>
+                <div className={css.rangePanelRow}>
+                  <span>{t('range.amplitude')}</span>
+                  <span>{fmtPercent(rangeStats.amplitudePercent)}</span>
+                </div>
+                <div className={css.rangePanelRow}>
+                  <span>{t('range.volume')}</span>
+                  <span>{fmtCompact(rangeStats.volume, numLocale)}</span>
+                </div>
+                <div className={css.rangePanelRow}>
+                  <span>{t('range.bars')}</span>
+                  <span>{rangeStats.bars}</span>
+                </div>
+                <div className={css.rangePanelRow}>
+                  <span>{t('range.upDays')}</span>
+                  <span>{rangeStats.upBars}</span>
+                </div>
+                <div className={css.rangePanelRow}>
+                  <span>{t('range.downDays')}</span>
+                  <span>{rangeStats.downBars}</span>
+                </div>
+              </div>
+            )}
+            {/* 标记悬停 Tooltip：绝对定位在 chartBox（position:relative）内，
+                坐标系与 TvChart 回报的容器坐标一致 */}
+            {markerHover !== null && (
+              <MarkerTooltip
+                x={markerHover.x}
+                y={markerHover.y}
+                containerWidth={markerHover.containerWidth}
+                containerHeight={markerHover.containerHeight}
+                t={t}
+                signal={markerHover.signal ? {
+                  action: markerHover.signal.action,
+                  price: markerHover.signal.price,
+                  reason: markerHover.signal.reason,
+                  time: markerHover.signal.time,
+                } : undefined}
+                knowledge={markerHover.knowledge ? {
+                  title: markerHover.knowledge.title,
+                  credibility: markerHover.knowledge.credibility,
+                  cardId: markerHover.knowledge.cardId,
+                } : undefined}
+              />
+            )}
+            </div>
+            {/* 五日级别量比档位图例：阈值 1/2/3、基准日与无前值语义（色块与图上
+                成交量同源，深色主题用等语义高对比色） */}
+            {viewTab === 'chart' && chartInterval === FIVE_DAY_INTERVAL && (
+              <div className={css.ratioLegend} data-dshtrading-ratio-legend="">
+                <span className={css.ratioLegendTitle}>{t('volumeRatio.legend.title')}</span>
+                {FIVE_DAY_LEGEND_TIERS.map(tier => (
+                  <span key={tier} className={css.ratioLegendItem} data-dshtrading-ratio-tier={tier}>
+                    <span className={css.ratioLegendSwatch} style={{ background: fiveDayVolumeColor(tier, dark) }} />
+                    <span>{t(RATIO_TIER_KEY[tier])}</span>
+                  </span>
+                ))}
+                <span className={css.ratioLegendNote}>{t('volumeRatio.legend.note')}</span>
+              </div>
+            )}
+          </div>
+          {orderbookOpen && (
+            <div className={css.rightSidebar}>
+              {orderbookOpen && (
+                <OrderbookPane
+                  t={t}
+                  orderbook={orderbook}
+                  trades={trades}
+                  orderbookLoading={orderbookLoading}
+                  colorMode={colorMode}
+                  onClose={() => {
+                    setOrderbookOpen(false)
+                    writeOrderbookOpen(false)
+                  }}
+                />
+              )}
+            </div>
+          )}
+        </div>
+      ) : viewTab === 'derivatives' ? (
+        <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          <DerivativesStage t={t} derivatives={derivatives} history={derivativesHistory} historyLoaded={derivativesHistoryLoaded} colorMode={colorMode} />
+        </div>
+      ) : viewTab === 'fundamentals' ? (
+        <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          <FundamentalsStage t={t} useSelection={useSelection} />
+        </div>
+      ) : viewTab === 'news' ? (
+        <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          <NewsFeedPane
+            items={newsItems}
+            unavailable={newsUnavailable}
+            fullHeight
+            filterType="media"
+            t={t}
+          />
+        </div>
+      ) : (
+        <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          <NewsFeedPane
+            items={newsItems}
+            unavailable={newsUnavailable}
+            fullHeight
+            filterType="exchange"
+            t={t}
+          />
+        </div>
+      )}
+
+      {/* 底部横向指标词条带（图表页签） */}
+      {stageTab === 'chart' && (
+        <div className={css.quickIndicatorBar} role="toolbar" aria-label="Quick indicators">
+          {allDefinitions.map(def => {
+            // 词条带显示「此刻在这张图上真正生效的指标」：与图表/读数行同源
+            // （symbol visibility + 适用范围双重过滤）。只按可见性判定会让被适用范围
+            // 排除的指标（如仅港A生效的 KDAS 在美股）误显为已启用。
+            // 词条带显示「此刻在这张图上真正生效的指标」：与图表/读数行同源
+            // （symbol visibility + 适用范围双重过滤）。只按可见性判定会让被适用范围
+            // 排除的指标（如仅港A生效的 KDAS 在美股）误显为已启用。
+            const active = applicableInstances.some(inst => inst.id === def.id)
+            return (
+              <button
+                key={def.id}
+                type="button"
+                className={css.quickIndicatorTag}
+                data-active={active ? 'true' : undefined}
+                onClick={() => toggleIndicatorVisible(def.id)}
+                title={`${def.title} (${def.pane === 'main' ? t('indicator.group.main') : t('indicator.group.sub')})`}
+              >
+                {def.title}
+              </button>
+            )
+          })}
+        </div>
+      )}
+
+      {/* 底部富途式市场状态栏（秒级时钟自持于 StatusBar，见下） */}
+      <StatusBar
+        t={t}
+        activeMarket={activeMarket}
+        indexDefs={indexDefs}
+        indexTickers={indexTickers}
+        colorMode={colorMode}
+      />
+    </div>
+  )
+}
+
+/**
+ * 底部富途式市场状态栏。秒级时钟与市场时段状态自持：时钟每秒 setState 只重渲染
+ * 这个小节点，不再把整棵 QuoteStage 子树（含 TvChart）拖进每秒一次的渲染。
+ */
+function StatusBar(props: {
+  t: Translate
+  activeMarket: MarketId
+  indexDefs: readonly MarketIndexDef[]
+  indexTickers: Record<string, Ticker>
+  colorMode: ColorMode
+}): React.JSX.Element {
+  const { t, activeMarket, indexDefs, indexTickers, colorMode } = props
+  const [clock, setClock] = useState(() => formatStatusBarClock(Date.now()))
+  useEffect(() => {
+    const timer = setInterval(() => { setClock(formatStatusBarClock(Date.now())) }, 1000)
+    return () => clearInterval(timer)
+  }, [])
+  // 市场时段状态（随秒钟与激活市场自动刷新）
+  const sessionStatus = useMemo(() => {
+    return getMarketSessionStatus(activeMarket, Date.now())
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeMarket, clock])
+  return (
+    <div className={css.statusBar} role="status">
+      <span className={css.statusSession}>
+        <span className={css.statusDot} style={{ background: sessionStatus.color }} />
+        {t(sessionStatus.statusKey)}
+      </span>
+      {indexDefs.map(def => {
+        const indexTicker = indexTickers[def.symbol]
+        const price = indexTicker?.price
+        const prevClose = (indexTicker as { prevClose?: number })?.prevClose
+        const pct = (indexTicker as { changePercent?: number })?.changePercent ?? changePercent(price, prevClose)
+        const color = directionColor(pct ?? 0, colorMode)
+        return (
+          <span key={def.symbol} className={css.indexGroup}>
+            <span className={css.indexName}>{t(def.nameKey)}</span>
+            {price !== undefined ? (
+              <span style={{ color, fontWeight: 600 }}>
+                {fmtPrice(price)} {fmtPercent(pct)}
+              </span>
+            ) : (
+              <span style={{ color: 'var(--dsw-futu-text-muted, #8e95a3)' }}>—</span>
+            )}
+          </span>
+        )
+      })}
+      <span className={css.statusClock}>{clock}</span>
+    </div>
+  )
+}
+
+/** 指标选择器面板（同文件内导出：选择器渲染的独立用例直接 mount 它）。 */
+export function IndicatorPicker(props: {
+  t: Translate
+  /** 当前标的可见实例（勾选态/参数编辑的数据源）。 */
+  instances: IndicatorInstance[]
+  /** 聚焦市场（决策 5：选择器只列该市场可用的 definition；缺席不过滤）。 */
+  market?: MarketId | undefined
+  /** 全量激活名册（含对当前标的隐藏的实例）——「全局移除」按钮的存在性判定。 */
+  activeInstances: IndicatorInstance[]
+  editingIndicator: string | null
+  /** 当前标的的 scope 键（`${market}:${symbol}`）；undefined = 无聚焦标的。 */
+  scopeKey?: string | undefined
+  /** 当前标的 symbol（覆盖提示文案用）。 */
+  symbolLabel?: string | undefined
+  /** 自定义指标加载失败态（模块级 store 注入）；null = 无失败、不渲染提示行。 */
+  loadFailure: IndicatorLoadFailure | null
+  /** 「重试」按钮动作（重拉桥并按同一套失败分类刷新失败态）。 */
+  onRetryLoad: () => void
+  onToggle: (id: string) => void
+  onEdit: (id: string) => void
+  /** 适用范围写入：scope === undefined 删除该市场条目（落回全部级别应用）。 */
+  onSetScope: (id: string, market: MarketId, scope: IndicatorMarketScope | undefined) => void
+  onApply: (id: string, params: Record<string, number>) => void
+  onRemoveGlobal: (id: string) => void
+  onDelete: (id: string) => void
+  onClose: () => void
+}): React.JSX.Element {
+  const { t, market, instances, activeInstances, editingIndicator, scopeKey, symbolLabel, loadFailure, onRetryLoad, onToggle, onEdit, onSetScope, onApply, onRemoveGlobal, onDelete, onClose } = props
+  // 决策 5：只列当前市场可用的指标（如港股通持股比例不进 crypto/us/cn 的选择器）。
+  const definitions = availableDefinitions(indicators.list(), market)
+  const empty = definitions.length === 0
+  return (
+    <>
+      <div className={css.pickerBackdrop} onClick={onClose} aria-hidden="true" />
+      <div className={css.pickerPanel} role="dialog" aria-label={t('indicator.picker')}>
+        <div className={css.pickerTitle}>{t('indicator.picker')}</div>
+        {/* 自定义指标加载失败行（2026-10-14）：失败必须在这里可见——旧实现只在
+            console.warn 里失败，用户看到的是「自建指标凭空消失」。 */}
+        {loadFailure !== null && (
+          <div className={css.pickerLoadFailure} role="status">
+            <span className={css.pickerLoadFailureText}>{t('indicator.loadFailed', { reason: loadFailure.reason })}</span>
+            {loadFailure.retryable ? (
+              <>
+                {loadFailure.exhausted && (
+                  <span className={css.pickerLoadFailureText}>{t('indicator.loadRetryStopped')}</span>
+                )}
+                <button type="button" className={css.pickerLoadRetry} onClick={onRetryLoad}>
+                  {t('indicator.loadRetry')}
+                </button>
+              </>
+            ) : (
+              <span className={css.pickerLoadFailureText}>{t('indicator.loadInvalid')}</span>
+            )}
+          </div>
+        )}
+        {empty ? (
+          <div className={css.pickerGroupTitle}>{t('indicator.empty')}</div>
+        ) : (
+          <>
+            <PickerGroup
+              title={t('indicator.group.main')}
+              definitions={definitions.filter(definition => definition.pane === 'main')}
+              instances={instances}
+              activeInstances={activeInstances}
+              editingIndicator={editingIndicator}
+              scopeKey={scopeKey}
+              symbolLabel={symbolLabel}
+              t={t}
+              onToggle={onToggle}
+              onEdit={onEdit}
+              onSetScope={onSetScope}
+              onApply={onApply}
+              onRemoveGlobal={onRemoveGlobal}
+              onDelete={onDelete}
+            />
+            <PickerGroup
+              title={t('indicator.group.sub')}
+              definitions={definitions.filter(definition => definition.pane === 'sub')}
+              instances={instances}
+              activeInstances={activeInstances}
+              editingIndicator={editingIndicator}
+              scopeKey={scopeKey}
+              symbolLabel={symbolLabel}
+              t={t}
+              onToggle={onToggle}
+              onEdit={onEdit}
+              onSetScope={onSetScope}
+              onApply={onApply}
+              onRemoveGlobal={onRemoveGlobal}
+              onDelete={onDelete}
+            />
+          </>
+        )}
+      </div>
+    </>
+  )
+}
+
+function PickerGroup(props: {
+  title: string
+  definitions: readonly IndicatorDefinition[]
+  /** 当前标的可见实例（勾选态/参数编辑）。 */
+  instances: readonly IndicatorInstance[]
+  /** 全量激活名册（「全局移除」按钮存在性）。 */
+  activeInstances: readonly IndicatorInstance[]
+  editingIndicator: string | null
+  scopeKey?: string | undefined
+  symbolLabel?: string | undefined
+  t: Translate
+  onToggle: (id: string) => void
+  onEdit: (id: string) => void
+  onSetScope: (id: string, market: MarketId, scope: IndicatorMarketScope | undefined) => void
+  onApply: (id: string, params: Record<string, number>) => void
+  onRemoveGlobal: (id: string) => void
+  onDelete: (id: string) => void
+}): React.JSX.Element {
+  const { title, definitions, instances, activeInstances, editingIndicator, scopeKey, symbolLabel, t, onToggle, onEdit, onSetScope, onApply, onRemoveGlobal, onDelete } = props
+  // 适用范围面板单开（每行一个，避让参数编辑器）。
+  const [scopeId, setScopeId] = useState<string | null>(null)
+  return (
+    <div className={css.pickerGroup}>
+      <div className={css.pickerGroupTitle}>{title}</div>
+      {definitions.map(definition => {
+        const visible = instances.find(candidate => candidate.id === definition.id) ?? null
+        // 适用范围是跨标的的全局设置（不随当前标的显隐变化），编辑器取原始名册行——
+        // 否则指标在当前标的被隐藏时按钮可点却不出面板（死按钮）。
+        const scoped = activeInstances.find(candidate => candidate.id === definition.id) ?? null
+        const active = scoped !== null
+        const editing = editingIndicator === definition.id
+        const scopeOpen = scopeId === definition.id
+        // issue #72：编辑器初值 = 当前标的生效参数（覆盖优先），有覆盖时展示提示。
+        const scopedParams = visible !== null && scopeKey !== undefined ? visible.symbolParams?.[scopeKey] : undefined
+        return (
+          <div key={definition.id} className={css.pickerRow}>
+            <label className={css.pickerLabel}>
+              <input
+                type="checkbox"
+                checked={visible !== null}
+                onChange={() => onToggle(definition.id)}
+              />
+              <span>{definition.title}</span>
+            </label>
+            {visible !== null && (
+              <button
+                type="button"
+                className={css.pickerParams}
+                data-open={editing ? 'true' : undefined}
+                onClick={() => onEdit(definition.id)}
+              >
+                {t('indicator.params')}
+              </button>
+            )}
+            {active && (
+              <button
+                type="button"
+                className={css.pickerParams}
+                data-open={scopeOpen ? 'true' : undefined}
+                aria-expanded={scopeOpen}
+                onClick={() => setScopeId(current => current === definition.id ? null : definition.id)}
+              >
+                {t('indicator.scope')}
+              </button>
+            )}
+            {active && (
+              <button
+                type="button"
+                className={css.pickerParams}
+                title={t('indicator.removeGlobal')}
+                aria-label={t('indicator.removeGlobal')}
+                onClick={() => {
+                  if (window.confirm(t('indicator.removeGlobalConfirm'))) onRemoveGlobal(definition.id)
+                }}
+              >
+                {t('indicator.removeGlobal')}
+              </button>
+            )}
+            {isCustomIndicator(definition.id) && (
+              <button
+                type="button"
+                className={css.pickerParams}
+                title={t('indicator.delete')}
+                aria-label={t('indicator.delete')}
+                onClick={() => {
+                  if (window.confirm(t('indicator.deleteConfirm'))) onDelete(definition.id)
+                }}
+              >
+                {t('indicator.delete')}
+              </button>
+            )}
+            {editing && visible !== null && (
+              <IndicatorParamEditor
+                definition={definition}
+                initial={scopedParams ?? visible.params}
+                overrideHint={scopedParams !== undefined && symbolLabel !== undefined
+                  ? t('indicator.symbolOverride', { symbol: symbolLabel })
+                  : undefined}
+                t={t}
+                onCancel={() => onEdit(definition.id)}
+                onApply={(params) => onApply(definition.id, params)}
+              />
+            )}
+            {scopeOpen && scoped !== null && (
+              <IndicatorScopeEditor
+                instance={scoped}
+                t={t}
+                onChange={(target, scope) => onSetScope(definition.id, target, scope)}
+              />
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/**
+ * 适用范围编辑器：按市场分行，每行一个启用开关；展开后勾选该市场的 K 线级别。
+ * 每市场另有「全部级别」「清空」批量动作。级别集按该市场当前路由的图表能力
+ * （supportedIntervals：能力驱动时含客户端视图级别 '5d'）。未选任何级别时明确
+ * 显示「未选择级别」——空选择绝不解释为全部。勾选态与开关都来自实例的
+ * applyScope 有效值（条目缺席 = 全部应用）。
+ */
+function IndicatorScopeEditor(props: {
+  instance: IndicatorInstance
+  t: Translate
+  onChange: (market: MarketId, scope: IndicatorMarketScope | undefined) => void
+}): React.JSX.Element {
+  const { instance, t, onChange } = props
+  const [expanded, setExpanded] = useState<MarketId | null>(null)
+  const capabilities = useMarketCapabilities()
+  return (
+    <div className={css.scopeEditor} data-dshtrading-scope="">
+      <div className={css.scopeHint}>{t('indicator.scope.hint')}</div>
+      {SCOPE_MARKETS.map(target => {
+        const supported = supportedIntervals(target, capabilities[target])
+        const scene = effectiveMarketScope(instance, target, supported)
+        const open = expanded === target
+        const commit = (next: IndicatorMarketScope): void => {
+          onChange(target, normalizeMarketScope(next, supported))
+        }
+        return (
+          <div key={target} className={css.scopeMarket} data-dshtrading-scope-market={target}>
+            <div className={css.scopeRow}>
+              <label className={css.scopeLabel}>
+                <input
+                  type="checkbox"
+                  checked={scene.enabled}
+                  aria-label={t('indicator.scope.enabled', { market: t(MARKET_TAB_KEY[target]) })}
+                  onChange={(event) => commit({ enabled: event.target.checked, intervals: scene.intervals })}
+                />
+                <span>{t(MARKET_TAB_KEY[target])}</span>
+              </label>
+              <span className={css.scopeSummary}>
+                {scene.intervals.length === 0
+                  ? t('indicator.scope.none')
+                  : open ? '' : t('indicator.scope.count', { count: scene.intervals.length, total: supported.length })}
+              </span>
+              <button
+                type="button"
+                className={css.pickerParams}
+                data-open={open ? 'true' : undefined}
+                data-dshtrading-scope-expand={target}
+                aria-expanded={open}
+                aria-label={t('indicator.scope.expand', { market: t(MARKET_TAB_KEY[target]) })}
+                onClick={() => setExpanded(current => current === target ? null : target)}
+              >
+                {open ? '−' : '+'}
+              </button>
+            </div>
+            {open && (
+              <>
+                <div className={css.scopeIntervals}>
+                  {supported.map(level => (
+                    <label key={level} className={css.scopeInterval} data-dshtrading-scope-level={level}>
+                      <input
+                        type="checkbox"
+                        checked={scene.intervals.includes(level)}
+                        onChange={(event) => {
+                          const intervals = event.target.checked
+                            ? [...scene.intervals, level]
+                            : scene.intervals.filter(entry => entry !== level)
+                          commit({ enabled: scene.enabled, intervals })
+                        }}
+                      />
+                      <span>{t(INTERVAL_KEY[level] ?? 'interval.1d')}</span>
+                    </label>
+                  ))}
+                </div>
+                <div className={css.scopeActions}>
+                  <button type="button" className={css.paramButton} onClick={() => commit({ enabled: scene.enabled, intervals: [...supported] })}>
+                    {t('indicator.scope.all')}
+                  </button>
+                  <button type="button" className={css.paramButton} onClick={() => commit({ enabled: scene.enabled, intervals: [] })}>
+                    {t('indicator.scope.clear')}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function IndicatorParamEditor(props: {
+  definition: IndicatorDefinition
+  initial: Record<string, number>
+  /** issue #72：当前编辑的是某标的的专属覆盖时展示的提示文案。 */
+  overrideHint?: string | undefined
+  t: Translate
+  onCancel: () => void
+  onApply: (params: Record<string, number>) => void
+}): React.JSX.Element {
+  const { definition, initial, t } = props
+  const [draft, setDraft] = useState<Record<string, number>>(() => {
+    const out: Record<string, number> = {}
+    for (const spec of definition.params) out[spec.key] = initial[spec.key] ?? spec.default
+    return out
+  })
+
+  return (
+    <div className={css.paramEditor}>
+      {props.overrideHint !== undefined && <div className={css.paramHint}>{props.overrideHint}</div>}
+      {definition.params.map(spec => (
+        <label key={spec.key} className={css.paramRow}>
+          <span>{spec.label}</span>
+          <input
+            type="number"
+            min={spec.min}
+            max={spec.max}
+            value={Number.isFinite(draft[spec.key]) ? draft[spec.key] : spec.default}
+            onChange={(event) => {
+              const next = Number(event.target.value)
+              setDraft(prev => ({ ...prev, [spec.key]: Number.isFinite(next) ? next : spec.default }))
+            }}
+          />
+        </label>
+      ))}
+      <div className={css.paramActions}>
+        <button type="button" className={css.paramButton} onClick={props.onCancel}>{t('indicator.cancel')}</button>
+        <button type="button" className={`${css.paramButton} ${css.paramApply}`} onClick={() => props.onApply(draft)}>{t('indicator.apply')}</button>
+      </div>
+    </div>
+  )
+}
+
+function formatStatusBarClock(ms: number): string {
+  const date = new Date(ms)
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  return `${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+}
+
+/** YYYY-MM-DD（区间统计面板的日期跨度）。 */
+function fmtDay(ms: number): string {
+  const date = new Date(ms)
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+}
+
+function readInterval(market: MarketId): string {
+  try {
+    const raw = localStorage.getItem(INTERVAL_KEY_PREFIX + market)
+    // 读回判据按「市场是否属于五日级别可能可得族」，不按当前路由——路由切换
+    // （tencent ↔ eastmoney）不该把记住的级别静默丢掉；真正的路由回落由
+    // QuoteStage 的能力守卫负责改写。
+    if (raw !== null && rememberableInterval(market, raw)) return raw
+  } catch { /* 忽略 */ }
+  return '1d'
+}
+
+function writeInterval(market: MarketId, interval: string): void {
+  try {
+    localStorage.setItem(INTERVAL_KEY_PREFIX + market, interval)
+  } catch { /* 忽略 */ }
+}
+
+/** 盘口竖栏开关记忆（issue #39；跨会话，坏值/隐私模式回退默认关——2026-09-08 用户裁定：
+ *  数据源普遍缺盘口（HK eastmoney/腾讯 r_hk 等），空竖栏是干扰；显式开过的用户保留偏好）。 */
+function readOrderbookOpen(): boolean {
+  try {
+    return localStorage.getItem(ORDERBOOK_OPEN_KEY) === '1'
+  } catch { /* 忽略 */ }
+  return false
+}
+
+function writeOrderbookOpen(open: boolean): void {
+  try {
+    localStorage.setItem(ORDERBOOK_OPEN_KEY, open ? '1' : '0')
+  } catch { /* 忽略 */ }
+}
+
+/** 交易台开关记忆（issue #40；默认关——安全敏感面）。 */
+function readTradeDeskOpen(): boolean {
+  try {
+    return localStorage.getItem(TRADE_DESK_OPEN_KEY) === '1'
+  } catch { /* 忽略 */ }
+  return false
+}
+
+function writeTradeDeskOpen(open: boolean): void {
+  try {
+    localStorage.setItem(TRADE_DESK_OPEN_KEY, open ? '1' : '0')
+  } catch { /* 忽略 */ }
+}
+
+const TAB_KEY: Record<MarketId, MarketLocaleKey> = {
+  crypto: 'tab.crypto',
+  us: 'tab.us',
+  cn: 'tab.cn',
+  hk: 'tab.hk',
+  futures: 'tab.futures',
+  global: 'tab.global',
+}
