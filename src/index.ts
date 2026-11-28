@@ -8,13 +8,21 @@
  * 交易数据面（/dshtrading/api、SSE、定时任务）仍由 @dshtrading/bot-api 提供，
  * 连接器与账本由 @dshtrading/{base,cn,us,hk,crypto,futures,global} 提供。
  */
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { readdir, readFile, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { parseReport, reportChanges, reportSignals } from './watch-parse.ts'
+import { nodeProbe, pickWatchRoot, type RootChoice } from './watch-root.ts'
 
 export const name = 'dsh-trading-panel'
+
+// 解析器与工作区判定对外导出，node 测试直接对真实报告断言（见 scripts/test-watch.mjs）。
+export { parseReport, reportChanges, reportSignals, parseInline, plainText } from './watch-parse.ts'
+export { nodeProbe, pickWatchRoot, reportsDir } from './watch-root.ts'
+export type { ParsedReport, ReportSection, ReportBlock, ReportItem, ReportTable, Inline } from './watch-parse.ts'
+export type { RootChoice, RootSource } from './watch-root.ts'
 
 const MOUNT = '/dshtrading-panel/api/files'
 const TEXT_LIMIT = 512 * 1024
@@ -34,35 +42,117 @@ function sendJson(res: ServerResponse, status: number, body: unknown): void {
   res.end(payload)
 }
 
-/** 工作区根：显式环境变量优先，其次取 DSH 工作区登记表里默认工作区的 path。 */
-function resolveRoot(): string {
-  const explicit = process.env.DSH_TRADING_FILES_ROOT
-  if (explicit !== undefined && explicit !== '') return explicit
-  const home = process.env.DSH_HOME ?? path.join(homedir(), '.dsh')
-  try {
-    const file = path.join(home, 'storages', 'workspace.json')
-    if (existsSync(file)) {
-      const parsed = JSON.parse(readFileSync(file, 'utf8')) as {
-        global?: { defaultWorkspaceId?: string }
-        tables?: { workspaces?: Record<string, { path?: string; updatedAt?: string }> }
-      }
-      const rows = parsed.tables?.workspaces ?? {}
-      // 取最近更新的工作区：defaultWorkspaceId 只是「默认」的一个，用户真正在用的
-      // 往往是最新那个（面板无会话上下文可读，只能按登记表时间推断）。
-      const entries = Object.values(rows).filter((row) => row?.path !== undefined && row.path !== '')
-      entries.sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))
-      const preferred = parsed.global?.defaultWorkspaceId
-      const picked = entries[0] ?? (preferred !== undefined ? rows[preferred] : undefined)
-      if (picked?.path !== undefined && picked.path !== '') return picked.path
-    }
-  } catch { /* 登记表缺失/损坏 → 退回 cwd */ }
-  return process.cwd()
+
+/**
+ * 工作区根判定：逻辑在 src/watch-root.ts（显式配置 → 真有最新盯盘报告的工作区 →
+ * 登记表最近更新 → cwd）。这里只做带 TTL 的缓存：报告目录会随时间出现（新跑一次
+ * 盯盘脚本），永久缓存会把面板钉在启动瞬间的空目录上。
+ */
+const ROOT_TTL_MS = 60_000
+let cachedRoot: { at: number; value: RootChoice } | null = null
+
+function rootInfo(): RootChoice {
+  const now = Date.now()
+  if (cachedRoot === null || now - cachedRoot.at > ROOT_TTL_MS) {
+    cachedRoot = { at: now, value: pickWatchRoot({ ...nodeProbe(), bound: readBound() }) }
+  }
+  return cachedRoot.value
 }
 
-let cachedRoot: string | null = null
+/**
+ * 面板上「绑定工作区」的落盘位置：`$DSH_HOME/dsh-trading-panel/settings.json`。
+ * 绑定优先于自动探测（仅次于环境变量），换台机器/换个人装插件时各自维护自己的。
+ */
+const SETTINGS_DIR = path.join(process.env.DSH_HOME ?? path.join(homedir(), '.dsh'), 'dsh-trading-panel')
+const SETTINGS_FILE = path.join(SETTINGS_DIR, 'settings.json')
+
+function readBound(): string | null {
+  try {
+    const raw = JSON.parse(readFileSync(SETTINGS_FILE, 'utf8')) as { watchRoot?: unknown }
+    const value = typeof raw.watchRoot === 'string' ? raw.watchRoot.trim() : ''
+    return value === '' ? null : value
+  } catch {
+    return null
+  }
+}
+
+function writeBound(value: string | null): void {
+  mkdirSync(SETTINGS_DIR, { recursive: true })
+  writeFileSync(SETTINGS_FILE, JSON.stringify({ watchRoot: value }, null, 2), 'utf8')
+  cachedRoot = null
+}
+
+interface WorkspaceRow {
+  path: string
+  name: string
+  reports: number
+  latest: number
+  updatedAt: string | null
+}
+
+/** 列登记表里的工作区，并标出各自有多少份盯盘报告（绑定选择器用）。 */
+function listWorkspaces(): WorkspaceRow[] {
+  const probe = nodeProbe()
+  const text = probe.readText(path.join(probe.home, 'storages', 'workspace.json'))
+  let rows: { path?: string; updatedAt?: string }[] = []
+  if (text !== null) {
+    try {
+      const parsed = JSON.parse(text) as { tables?: { workspaces?: Record<string, { path?: string; updatedAt?: string }> } }
+      rows = Object.values(parsed.tables?.workspaces ?? {})
+    } catch { rows = [] }
+  }
+  const seen = new Set<string>()
+  const out: WorkspaceRow[] = []
+  for (const row of rows) {
+    const dir = typeof row.path === 'string' ? row.path.trim() : ''
+    if (dir === '') continue
+    const key = dir.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    let reports = 0
+    let latest = 0
+    for (const rel of ['reports/watch', 'reports']) {
+      let names: string[] = []
+      try {
+        names = readdirSync(path.join(dir, rel)).filter((n) => n.toLowerCase().endsWith('.md'))
+      } catch { continue }
+      if (names.length === 0) continue
+      reports = names.length
+      for (const n of names) {
+        try {
+          const m = statSync(path.join(dir, rel, n)).mtimeMs
+          if (m > latest) latest = m
+        } catch { /* 断链：跳过 */ }
+      }
+      break
+    }
+    out.push({ path: dir, name: path.basename(dir) || dir, reports, latest, updatedAt: row.updatedAt ?? null })
+  }
+  out.sort((a, b) => (b.latest - a.latest) || (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))
+  return out
+}
+
+/** POST 的 JSON body：绑定请求体很小，超过 4KB 直接截断。 */
+async function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+  const chunks: Buffer[] = []
+  let size = 0
+  for await (const chunk of req) {
+    const buf = chunk as Buffer
+    size += buf.length
+    if (size > 4096) break
+    chunks.push(buf)
+  }
+  if (chunks.length === 0) return {}
+  try {
+    const parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown
+    return parsed !== null && typeof parsed === 'object' ? parsed as Record<string, unknown> : {}
+  } catch {
+    return {}
+  }
+}
+
 function root(): string {
-  cachedRoot ??= resolveRoot()
-  return cachedRoot
+  return rootInfo().root
 }
 
 /** 相对路径归一：拒绝绝对路径与 `..` 越界，返回 root 内的绝对路径。 */
@@ -100,9 +190,28 @@ async function listDir(rel: string): Promise<unknown> {
 }
 
 /**
+ * 列表用的轻量摘要：一栏里能看懂「哪条线、什么时候、几个信号、几跌几涨」，
+ * 不用点进去读 markdown 符号。没有的数字如实留 0/null，不拼「0 涨」这类噪声。
+ */
+interface ReportMeta {
+  line: string
+  asOf: string | null
+  signals: number
+  up: number
+  down: number
+  worst: { name: string; delta: number } | null
+}
+
+function reportMeta(text: string): ReportMeta {
+  const report = parseReport(text)
+  const { up, down, worst, signals } = report.summary
+  return { line: report.line, asOf: report.asOf, signals, up, down, worst }
+}
+
+/**
  * 近期盯盘报告：扫 `<workspace>/reports/watch/*.md`（没有就退 `reports/*.md`），
- * 按修改时间倒序。左栏「盯盘报告」用它把工作区里真实产出的日报列出来——
- * 只读、只列文件名与时间，正文仍走 /read 预览。
+ * 按修改时间倒序，每行带上报告摘要（线名/时间/信号数/涨跌家数/最大跌幅）。
+ * 摘要读不到只影响那一行，不影响列表本身。
  */
 async function listReports(limit: number): Promise<unknown> {
   const base = path.resolve(root())
@@ -113,19 +222,57 @@ async function listReports(limit: number): Promise<unknown> {
     const rows = await Promise.all(dirents
       .filter((d) => d.isFile() && d.name.toLowerCase().endsWith('.md'))
       .map(async (d) => {
+        const full = path.join(dir, d.name)
         let size = 0
         let mtime = 0
         try {
-          const st = await stat(path.join(dir, d.name))
+          const st = await stat(full)
           size = st.size
           mtime = st.mtimeMs
         } catch { /* 断链/无权限：保留 0 */ }
-        return { name: d.name, path: `${rel}/${d.name}`, size, mtime }
+        let meta: ReportMeta | null = null
+        try {
+          meta = reportMeta((await readFile(full)).toString('utf8'))
+        } catch { /* 正文读不到：该行没有摘要 */ }
+        return { name: d.name, path: `${rel}/${d.name}`, size, mtime, meta }
       }))
     rows.sort((a, b) => b.mtime - a.mtime)
-    return { ok: true, dir: rel, entries: rows.slice(0, Math.max(1, Math.min(limit, 50))) }
+    // 目录在但没有 md（或全是子目录）时继续往下一个布局找，别停在空目录上。
+    if (rows.length === 0) continue
+    return {
+      ok: true,
+      root: base,
+      source: rootInfo().source,
+      dir: rel,
+      entries: rows.slice(0, Math.max(1, Math.min(limit, 50))),
+    }
   }
-  return { ok: true, dir: null, entries: [] }
+  return { ok: true, root: base, source: rootInfo().source, dir: null, entries: [] }
+}
+
+/**
+ * 单份报告：结构化解析结果 + 信号/变化条目。浏览器半只渲染这些块，不再拼字符串；
+ * 原文另走 /read（同一路径），「看原文」按钮用。
+ */
+async function readReport(rel: string): Promise<unknown> {
+  const target = insideRoot(rel)
+  if (target === null) return { ok: false, code: 'FILES_OUT_OF_ROOT', message: 'path escapes workspace root' }
+  const info = await stat(target)
+  if (info.isDirectory()) return { ok: false, code: 'FILES_IS_DIRECTORY', message: 'is a directory' }
+  if (info.size > TEXT_LIMIT) return { ok: false, code: 'FILES_TOO_LARGE', message: `file larger than ${TEXT_LIMIT} bytes`, size: info.size }
+  const buffer = await readFile(target)
+  const report = parseReport(buffer.toString('utf8'))
+  return {
+    ok: true,
+    root: rootInfo().root,
+    source: rootInfo().source,
+    path: rel,
+    size: info.size,
+    mtime: info.mtimeMs,
+    report,
+    signals: reportSignals(report),
+    changes: reportChanges(report),
+  }
 }
 
 async function readText(rel: string): Promise<unknown> {
@@ -236,8 +383,45 @@ export function apply(ctx: {
           sendJson(res, 200, await listReports(Number.isFinite(limit) ? limit : 8))
           return
         }
+        if (req.method === 'GET' && (sub2 === '/watch/report' || sub2 === '/report')) {
+          sendJson(res, 200, await readReport(url.searchParams.get('path') ?? ''))
+          return
+        }
+        if (req.method === 'GET' && sub2 === '/watch/reports') {
+          const aliasLimit = Number(url.searchParams.get('limit') ?? '20')
+          sendJson(res, 200, await listReports(Number.isFinite(aliasLimit) ? aliasLimit : 20))
+          return
+        }
+        if (req.method === 'GET' && sub2 === '/workspaces') {
+          sendJson(res, 200, {
+            ok: true,
+            root: rootInfo().root,
+            source: rootInfo().source,
+            bound: readBound(),
+            workspaces: listWorkspaces(),
+          })
+          return
+        }
+        if (req.method === 'POST' && sub2 === '/bind') {
+          const body = await readJsonBody(req)
+          const raw = typeof body.path === 'string' ? body.path.trim() : ''
+          if (raw === '') { sendJson(res, 400, { ok: false, code: 'BIND_EMPTY', message: 'path is required' }); return }
+          const target = path.resolve(raw)
+          if (!existsSync(target) || !statSync(target).isDirectory()) {
+            sendJson(res, 400, { ok: false, code: 'BIND_NOT_A_DIRECTORY', message: `not a directory: ${target}` })
+            return
+          }
+          writeBound(target)
+          sendJson(res, 200, { ok: true, ...rootInfo(), bound: target })
+          return
+        }
+        if (req.method === 'POST' && sub2 === '/unbind') {
+          writeBound(null)
+          sendJson(res, 200, { ok: true, ...rootInfo(), bound: null })
+          return
+        }
         if (req.method === 'GET' && sub2 === '/root') {
-          sendJson(res, 200, { ok: true, root: root() })
+          sendJson(res, 200, { ok: true, ...rootInfo() })
           return
         }
         sendJson(res, 404, { ok: false, code: 'FILES_ROUTE_NOT_FOUND', message: `unknown route: ${sub2}` })

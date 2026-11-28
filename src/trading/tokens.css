@@ -42,6 +42,8 @@
   --dsw-futu-accent-subtle: rgba(37, 99, 235, 0.08);
   --dsw-futu-accent-border: rgba(37, 99, 235, 0.25);
   --dsw-futu-accent-text: #2563eb;
+  /* 提醒语义色（既不是涨红也不是跌绿），用于「中」级信号、需留意但不致命的信息 */
+  --dsw-futu-warn: #b7791f;
 
   /* 胶囊与圆角规范 */
   --dsw-futu-radius-xs: 3px;
@@ -85,6 +87,8 @@ body[data-ds-dark-theme],
   --dsw-futu-accent-subtle: rgba(96, 165, 250, 0.15);
   --dsw-futu-accent-border: rgba(96, 165, 250, 0.35);
   --dsw-futu-accent-text: #93c5fd;
+  /* 深色模式提高亮度，保证在 #131722 上可读 */
+  --dsw-futu-warn: #e0a458;
 
   /* 涨跌语义半透明背景与渐变（暗色微调） */
   --dsw-futu-up-bg: rgba(230, 69, 69, 0.16);

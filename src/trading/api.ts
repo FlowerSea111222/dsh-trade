@@ -17,7 +17,7 @@ export class BridgeError extends Error {
   }
 }
 
-async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
+async function requestJson<T>(path: string, signal?: AbortSignal): Promise<T> {
   const response = await fetch(path, { headers: { accept: 'application/json' }, ...(signal === undefined ? {} : { signal }) })
   if (response.status === 401) throw new BridgeError(401, 'unauthorized')
   if (response.status === 403) throw new BridgeError(403, 'forbidden')
@@ -36,6 +36,27 @@ async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
     throw new BridgeError(200, `${business.code ?? 'TRADING_UNKNOWN'}: ${business.message ?? 'bridge business error'}`, business.code)
   }
   return wire
+}
+
+/**
+ * 在途请求合并（单飞）：同一 URL 同时只打一次桥，落地即删——不做缓存，不改变新鲜度。
+ *
+ * 为什么（2026-11-25 诊断）：日 K 视图里「图表序列」与「日 K 参考」本来是两个调用点，
+ * resync 与切标的/切级别也会撞车；腾讯 fqkline 对短时高频很敏感（同一 URL 数十秒内
+ * 200 → 501 WAF）。合并只减少**重复**请求，不减少该发的请求。带 signal 的调用不合并
+ * （取消语义不能被共享）。
+ */
+const inflightJson = new Map<string, Promise<unknown>>()
+
+async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
+  if (signal !== undefined) return requestJson<T>(path, signal)
+  const pending = inflightJson.get(path)
+  if (pending !== undefined) return pending as Promise<T>
+  const promise = requestJson<T>(path)
+  inflightJson.set(path, promise)
+  const settle = () => { if (inflightJson.get(path) === promise) inflightJson.delete(path) }
+  promise.then(settle, settle)
+  return promise
 }
 
 /** Installed markets + active provider slugs (drives the sidebar tab strip). */

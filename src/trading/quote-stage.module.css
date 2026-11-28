@@ -734,6 +734,28 @@
   font-size: 12px;
 }
 
+/* 横幅的「详情」折叠：原始 code / 上游 URL 只在这里露头，给排障的人看，
+   正常读盘的人只看到上面那句人话。 */
+.errorDetail {
+  margin-top: 4px;
+  color: var(--dsw-alias-label-secondary, #8a8f99);
+}
+
+.errorDetail > summary {
+  cursor: pointer;
+  user-select: none;
+}
+
+.errorDetail pre {
+  margin: 4px 0 0;
+  max-height: 96px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 /* KDAS 关键日右键菜单（chartBox 内绝对定位；坐标来自 TvChart 容器系） */
 .kdasMenu {
   position: absolute;

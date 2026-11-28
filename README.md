@@ -13,6 +13,7 @@
 - **三列可拖宽**：左栏 200–560px、右列 260–860px，拖手柄实时预览，中栏保底 380px；宽度记 `localStorage`，双击手柄复位。
 - **当日分时图**：1m 数据按市场本地交易日切片，面积线（涨红跌绿）+ 成交额加权均价线 + 昨收虚线，5s 轮询，legend 显示现价/涨跌幅/均价/昨收/实时。
 - **盯盘报告**：右列默认自动打开工作区 `reports/watch/` 下的最新报告，点条目左列可切到文件面板预览。
+- **报告可绑定工作区**：标题旁的下拉列出 DSH 登记过的所有工作区（带报告份数），选一个即持久化到 `$DSH_HOME/dsh-trading-panel/settings.json`；选「自动检测」则按「谁真有最新 reports/watch」自己挑。给别人用时不用改环境变量。
 - **文件面板**：宿主半提供 `/dshtrading-panel/api/files`（列目录 / 读文本 / 列报告），root 取 `DSH_TRADING_FILES_ROOT` → 最近更新的 DSH 工作区 → cwd。
 - **美股靠本地代理**：Yahoo 对国内直连返回 403，宿主半启动时探活本地代理（`DSHTRADING_PROXY` / `HTTPS_PROXY` / 默认 `http://127.0.0.1:12450`），可达则把**外网** fetch 交给 `undici` 的 `ProxyAgent`，回环地址仍直连。
 
@@ -53,7 +54,9 @@ profile 里是**实目录拷贝**（不是软链），改完必须同步再重�
 
 ```
 src/
-  index.ts             宿主半：文件/报告 API + 外网代理引导（installProxyFetch）
+  index.ts             宿主半：文件/报告 API、工作区绑定、外网代理引导（installProxyFetch）
+  watch-root.ts        「读哪个工作区」的唯一判定点（env → 绑定 → 报告最新 → 最近工作区 → cwd）
+  watch-parse.ts       盯盘报告 markdown 解析（分区/条目/表格）
   client/              浏览器半：TradingPage（三列壳）、TradingRow（导航行图标）、
                        FilesPanel、ReportsPanel、LeftPositions
   trading/             上游 0.7.1 客户端源码（22k 行，见「许可」）
@@ -64,6 +67,19 @@ src/
 scripts/deploy.mjs     构建 + 同步 + 字节校验
 cordis.patch.yml       55 行上游 patch + 1 行壳行替换
 ```
+
+## 报告工作区绑定
+
+右列「盯盘报告」标题右侧是工作区选择器：
+
+- 选项来自 `$DSH_HOME/storages/workspace.json` 登记的工作区，括号里的数字是各自 `reports/watch/*.md` 的份数，没有报告的工作区不带数字。
+- 选中即写入 `$DSH_HOME/dsh-trading-panel/settings.json` 的 `{ "watchRoot": "..." }`，重启、换会话都保持；选「自动检测（跟随工作区）」清空绑定。
+- 判定顺序（`src/watch-root.ts`）：`DSH_TRADING_WATCH_ROOT` / `DSH_TRADING_FILES_ROOT` 环境变量 → 面板绑定 → 报告最新的工作区 → 登记表最近更新 → 进程 cwd。
+- 绑定到一个还没有报告的工作区时，面板显示「这个工作区还没有 reports/watch 报告」并给出目录路径，不会静默空白。
+
+![绑定工作区](docs/screenshot-report-bind.png)
+
+![绑定后无报告](docs/screenshot-report-bind-empty.png)
 
 ## 与上游的差异
 

@@ -1,6 +1,6 @@
 {
   "name": "dsh-trading-panel",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "交易工作台面板：把 dsh-trading 三栏交易界面做成 DSH 客户端左侧导航行 + 全页面板",
@@ -35,7 +35,11 @@
   },
   "scripts": {
     "build": "tsdown && tsdown --config tsdown.client.config.mjs",
-    "deploy": "node scripts/deploy.mjs"
+    "build:test": "tsdown --config tsdown.test.config.mjs",
+    "preview:reports": "node scripts/make-report-preview.mjs",
+    "test": "tsdown && tsdown --config tsdown.client.config.mjs && tsdown --config tsdown.test.config.mjs && node scripts/test-watch.mjs && node scripts/test-report-view.mjs && node scripts/test-kline-retry.mjs && node scripts/test-switch-cn-provider.mjs && node scripts/make-report-preview.mjs",
+    "deploy": "node scripts/deploy.mjs",
+    "cn-provider": "node scripts/switch-cn-provider.mjs"
   },
   "dependencies": {
     "@dshtrading/api": "0.7.1",

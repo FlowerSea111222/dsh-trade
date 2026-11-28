@@ -45,6 +45,7 @@ import {
 } from '@dshtrading/indicators'
 import { auxEmptyNoticeKey, requiredAuxKeys } from './aux-series.ts'
 import { useAuxSeries } from './useAuxSeries.ts'
+import { describeKlineFailure, withKlineRetry } from './kline-retry.ts'
 import { availableDefinitions, dispatchIndicatorGroups } from './indicator-dispatch.ts'
 import { defaultScopeEntries } from './indicator-defaults.ts'
 import { ensureMarketProviders, useMarketCapabilities, useMarketProviders } from './market-providers.ts'
@@ -240,7 +241,8 @@ export function QuoteStage({ t, useSelection, useChart, toggleIndicator, setIndi
   /** 当前 klines 序列的供数源（桥在 klines 响应里标注；普通级别不跟踪 = undefined）。
    * 五日级别跨源时 ticker 必须向同一源取价，见 fiveDayTickerProvider。 */
   const [klinesProvider, setKlinesProvider] = useState<string | undefined>(undefined)
-  const [kError, setKError] = useState<string | null>(null)
+  /** 最近一次取数失败的归因：横幅只用人话那一句，原始 code/URL 进「详情」。 */
+  const [kError, setKError] = useState<{ retried: number; detail: string } | null>(null)
   const [ticker, setTicker] = useState<Ticker | null>(null)
   const [hoverIndex, setHoverIndex] = useState<number | null>(null)
   const [pickerOpen, setPickerOpen] = useState(false)
@@ -430,15 +432,21 @@ export function QuoteStage({ t, useSelection, useChart, toggleIndicator, setIndi
     const request = `${market}:${symbol}:${chartInterval}`
     requestRef.current = request
     try {
-      // 五日级别：永远是 1m 取数 + 客户端按市场时区分组取最近 5 个交易日；响应的
-      // provider 是本次实际供数的源（可能不是当前 active 路由——按能力跨源兜底），
-      // 记下来供 ticker 同源取价与合流判定。
-      const page = chartInterval === FIVE_DAY_INTERVAL
-        ? await fetchKlinesFrom(market, symbol, '1m', FIVE_DAY_KLINE_LIMIT)
-        : undefined
-      const rows = page !== undefined
-        ? toFiveDayBars(market, page.klines).map(bar => bar.kline)
-        : await fetchKlines(market, symbol, chartInterval, chartInterval === '1d' ? DAILY_LIMIT : klineLimit(market))
+      // 一次「取数 + 退避重试」：瞬态失败（上游 5xx / 网络 / 429）按 1s、3s 各重试一次；
+      // 符号或周期不认识这类确定性失败不重试、直接抛（见 kline-retry.ts 模块头注）。
+      const { value } = await withKlineRetry(async () => {
+        // 五日级别：永远是 1m 取数 + 客户端按市场时区分组取最近 5 个交易日；响应的
+        // provider 是本次实际供数的源（可能不是当前 active 路由——按能力跨源兜底），
+        // 记下来供 ticker 同源取价与合流判定。
+        const page = chartInterval === FIVE_DAY_INTERVAL
+          ? await fetchKlinesFrom(market, symbol, '1m', FIVE_DAY_KLINE_LIMIT)
+          : undefined
+        const rows = page !== undefined
+          ? toFiveDayBars(market, page.klines).map(bar => bar.kline)
+          : await fetchKlines(market, symbol, chartInterval, chartInterval === '1d' ? DAILY_LIMIT : klineLimit(market))
+        return { page, rows }
+      })
+      const { page, rows } = value
       if (requestRef.current !== request) return
       // 全量替换前的当日 bar 复原：上游缺当日那根时，每拍 resync 都会把 ticker 补出来的当日
       // bar 抹掉、5s 后再补回来，图上蜡烛与指标末点会周期性闪断。prev 一并传进去，让新造的
@@ -453,7 +461,10 @@ export function QuoteStage({ t, useSelection, useChart, toggleIndicator, setIndi
       setKError(null)
     } catch (error) {
       if (requestRef.current !== request) return
-      setKError(String((error as { message?: string })?.message ?? error))
+      // 同级别失败不清空已有序列：上游抖一下不该让图上蜡烛整块消失。但图上若是**别的
+      // 级别**的序列，留着它会以旧级别冒充新级别（坐标轴、指标、量比全错），必须清掉。
+      if (barIntervalRef.current !== chartInterval) setKlines(null)
+      setKError(describeKlineFailure(error))
     }
   }, residentPollMs(market, chartInterval === FIVE_DAY_INTERVAL ? FIVE_DAY_RESYNC_MS : KLINE_RESYNC_MS), [market, symbol, chartInterval, fiveDayCap])
 
@@ -1268,7 +1279,20 @@ export function QuoteStage({ t, useSelection, useChart, toggleIndicator, setIndi
         </div>
       )}
 
-      {viewTab === 'chart' && kError !== null && <div className={css.error}>{t('quote.loadFailedColon', { error: kError })}</div>}
+      {viewTab === 'chart' && chartInterval !== 'intraday' && kError !== null && (
+        <div className={css.error}>
+          {kError.retried > 0
+            ? t('quote.loadFailedRetry', {
+              interval: t(INTERVAL_KEY[chartInterval] ?? 'interval.1d'),
+              count: kError.retried,
+            })
+            : t('quote.loadFailedBrief', { interval: t(INTERVAL_KEY[chartInterval] ?? 'interval.1d') })}
+          <details className={css.errorDetail}>
+            <summary>{t('quote.errorDetail')}</summary>
+            <pre>{kError.detail}</pre>
+          </details>
+        </div>
+      )}
 
       {/* 图表主舞台 / 基本面页签（互斥挂载）；crypto 图表下方挂衍生品指标条（issue #38），
           右侧可折叠盘口竖栏（issue #39） */}
