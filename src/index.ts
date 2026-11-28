@@ -219,35 +219,60 @@ async function listReports(limit: number): Promise<unknown> {
     const dir = path.join(base, rel)
     if (!existsSync(dir)) continue
     const dirents = await readdir(dir, { withFileTypes: true })
-    const rows = await Promise.all(dirents
-      .filter((d) => d.isFile() && d.name.toLowerCase().endsWith('.md'))
-      .map(async (d) => {
-        const full = path.join(dir, d.name)
-        let size = 0
-        let mtime = 0
-        try {
-          const st = await stat(full)
-          size = st.size
-          mtime = st.mtimeMs
-        } catch { /* 断链/无权限：保留 0 */ }
-        let meta: ReportMeta | null = null
-        try {
-          meta = reportMeta((await readFile(full)).toString('utf8'))
-        } catch { /* 正文读不到：该行没有摘要 */ }
-        return { name: d.name, path: `${rel}/${d.name}`, size, mtime, meta }
-      }))
+    // 布局：`reports/watch/<标的>/<YYYY-MM-DD>.md`（当前），也兼容旧的平铺
+    // `reports/watch/<名字>-YYYY-MM-DD.md`——两种都收，前端按 folder 分组。
+    const files: { rel: string; folder: string | null }[] = []
+    for (const d of dirents) {
+      if (d.isFile() && d.name.toLowerCase().endsWith('.md')) {
+        files.push({ rel: `${rel}/${d.name}`, folder: null })
+        continue
+      }
+      if (!d.isDirectory() || SKIP.has(d.name)) continue
+      let inner: string[] = []
+      try {
+        inner = (await readdir(path.join(dir, d.name))).filter((n) => n.toLowerCase().endsWith('.md'))
+      } catch { continue }
+      for (const n of inner) files.push({ rel: `${rel}/${d.name}/${n}`, folder: d.name })
+    }
+    if (files.length === 0) continue
+    const rows = await Promise.all(files.map(async ({ rel: fileRel, folder }) => {
+      const full = path.join(base, fileRel)
+      let size = 0
+      let mtime = 0
+      try {
+        const st = await stat(full)
+        size = st.size
+        mtime = st.mtimeMs
+      } catch { /* 断链/无权限：保留 0 */ }
+      let meta: ReportMeta | null = null
+      try {
+        meta = reportMeta((await readFile(full)).toString('utf8'))
+      } catch { /* 正文读不到：该行没有摘要 */ }
+      const name = path.basename(fileRel)
+      return { name, path: fileRel, folder: folder ?? folderFromLine(meta?.line ?? null, name), size, mtime, meta }
+    }))
     rows.sort((a, b) => b.mtime - a.mtime)
-    // 目录在但没有 md（或全是子目录）时继续往下一个布局找，别停在空目录上。
     if (rows.length === 0) continue
+    const folders = [...new Set(rows.map((row) => row.folder))]
     return {
       ok: true,
       root: base,
       source: rootInfo().source,
       dir: rel,
+      folders,
       entries: rows.slice(0, Math.max(1, Math.min(limit, 50))),
     }
   }
-  return { ok: true, root: base, source: rootInfo().source, dir: null, entries: [] }
+  return { ok: true, root: base, source: rootInfo().source, dir: null, folders: [], entries: [] }
+}
+
+/** 平铺旧文件没有目录信息：从报告标题里取一个分组名（「黄金盯盘」→「黄金」）。 */
+function folderFromLine(line: string | null, name: string): string {
+  const raw = (line ?? '').replace(/盯盘.*$/, '').trim()
+  const cleaned = raw.replace(/[（(][^）)]*[）)]/g, '').trim()
+  if (cleaned !== '') return cleaned
+  const stem = name.replace(/\.md$/i, '').replace(/-?\d{4}-\d{2}-\d{2}$/, '')
+  return stem === '' ? '未分类' : stem
 }
 
 /**

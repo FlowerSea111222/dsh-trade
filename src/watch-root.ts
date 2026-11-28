@@ -127,15 +127,30 @@ export function nodeProbe(): RootProbe {
       }
     },
     newestReportMtime(dir: string): number {
-      try {
+      // 布局 `reports/watch/<标的>/<日期>.md`：只看顶层文件会把「有报告的工作区」判成空的，
+      // 所以顶层 + 一层子目录一起扫（更深的层级不认，避免误判）。
+      const scan = (target: string): number => {
         let newest = 0
-        for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        for (const entry of readdirSync(target, { withFileTypes: true })) {
           if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.md')) continue
           try {
-            const info = statSync(path.join(dir, entry.name))
+            const info = statSync(path.join(target, entry.name))
             if (info.mtimeMs > newest) newest = info.mtimeMs
           } catch {
             /* 断链/无权限：跳过这一份 */
+          }
+        }
+        return newest
+      }
+      try {
+        let newest = scan(dir)
+        for (const entry of readdirSync(dir, { withFileTypes: true })) {
+          if (!entry.isDirectory()) continue
+          try {
+            const inner = scan(path.join(dir, entry.name))
+            if (inner > newest) newest = inner
+          } catch {
+            /* 子目录不可读：跳过 */
           }
         }
         return newest

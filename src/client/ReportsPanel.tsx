@@ -34,6 +34,7 @@ interface ReportMeta {
 interface ReportRow {
   name: string
   path: string
+  folder?: string
   size: number
   mtime: number
   meta?: ReportMeta
@@ -114,6 +115,24 @@ function fileName(path: string): string {
   return path.replace(/\.md$/i, '')
 }
 
+/** 报告列表里用日期当名字：`黄金/2026-11-28.md` → `2026-11-28`。 */
+function dateLabel(name: string): string | null {
+  const hit = /(\d{4}-\d{2}-\d{2})/.exec(name)
+  return hit === null ? null : hit[1]
+}
+
+/** 按 folder 分组，保持列表原有的 mtime 倒序（组序 = 组内最新一份的时间）。 */
+function groupRows(rows: ReportRow[]): [string, ReportRow[]][] {
+  const groups = new Map<string, ReportRow[]>()
+  for (const row of rows) {
+    const key = row.folder === undefined || row.folder === '' ? '未分类' : row.folder
+    const bucket = groups.get(key)
+    if (bucket === undefined) groups.set(key, [row])
+    else bucket.push(row)
+  }
+  return [...groups.entries()]
+}
+
 function errorText(code: string | undefined, fallback: string): string {
   return code === undefined || code === '' ? fallback : code
 }
@@ -129,6 +148,8 @@ export function ReportsPanel({ t, onClose }: ReportsPanelProps) {
   const [raw, setRaw] = useState<ReadWire | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
   const [pickerOpen, setPickerOpen] = useState(false)
+  // 只有当前报告所在的文件夹默认展开，其余折叠成一行索引（14 份报告一屏塞不下）。
+  const [folded, setFolded] = useState<Record<string, boolean>>({})
   const [bound, setBound] = useState<string | null>(null)
   const [workspaces, setWorkspaces] = useState<WorkspaceRow[] | null>(null)
   const [bindBusy, setBindBusy] = useState(false)
@@ -255,6 +276,17 @@ export function ReportsPanel({ t, onClose }: ReportsPanelProps) {
   }, [mode, currentPath, currentMtime, refreshKey])
 
   const currentRow = rows?.find((row) => row.path === currentPath) ?? null
+  const currentFolder = currentRow === null || currentRow === undefined
+    ? null
+    : currentRow.folder === undefined || currentRow.folder === ''
+      ? '未分类'
+      : currentRow.folder
+  /** 用户手动点过的文件夹优先，没点过的：当前报告所在的展开、其余折叠。 */
+  const isFolded = (folder: string): boolean => {
+    const manual = folded[folder]
+    if (manual !== undefined) return manual
+    return folder !== currentFolder
+  }
   const sourceKey = source === null ? undefined : SOURCE_KEYS[source]
   const loading = rows === null
   const empty = rows !== null && rows.length === 0
@@ -326,29 +358,47 @@ export function ReportsPanel({ t, onClose }: ReportsPanelProps) {
 
       {!loading && !empty && (
         <div className={css.list}>
-          {(rows ?? []).map((row) => {
-            const signals = row.meta?.signals ?? 0
-            const sub = [row.meta?.asOf ?? '', signals > 0 ? t('panel.reportsSignals', { count: signals }) : '']
-              .filter((part) => part !== '')
-              .join(' · ')
+          {groupRows(rows ?? []).map(([folder, items]) => {
+            const open = !isFolded(folder)
             return (
-              <button
-                key={row.path}
-                type="button"
-                className={css.row}
-                data-active={currentPath === row.path ? 'true' : undefined}
-                title={row.path}
-                onClick={() => { setCurrentPath(row.path) }}
-              >
-                <span className={css.rowMain}>
-                  <span className={css.rowName}>{row.meta?.line ?? fileName(row.name)}</span>
-                  <span className={css.rowSub}>{sub === '' ? fileName(row.name) : sub}</span>
-                </span>
-                <span className={css.rowMeta}>
-                  {signals > 0 && <span className={css.badge} data-tone="warn">{signals}</span>}
-                  <span className={css.time}>{stamp(row.mtime)}</span>
-                </span>
-              </button>
+              <div key={folder} className={css.folderBlock}>
+                <button
+                  type="button"
+                  className={css.folderRow}
+                  aria-expanded={open}
+                  onClick={() => { setFolded((prev) => ({ ...prev, [folder]: open })) }}
+                >
+                  <span className={css.folderCaret} data-open={open ? 'true' : undefined}>▸</span>
+                  <span className={css.folderName}>{folder}</span>
+                  <span className={css.folderCount}>{items.length}</span>
+                </button>
+                {open && items.map((row) => {
+                  const signals = row.meta?.signals ?? 0
+                  const label = dateLabel(row.name) ?? fileName(row.name)
+                  const sub = [row.meta?.asOf === null || row.meta?.asOf === undefined ? '' : '', signals > 0 ? t('panel.reportsSignals', { count: signals }) : '']
+                    .filter((part) => part !== '')
+                    .join(' · ')
+                  return (
+                    <button
+                      key={row.path}
+                      type="button"
+                      className={css.row}
+                      data-active={currentPath === row.path ? 'true' : undefined}
+                      title={`${row.meta?.line ?? ''} ${row.path}`.trim()}
+                      onClick={() => { setCurrentPath(row.path) }}
+                    >
+                      <span className={css.rowMain}>
+                        <span className={css.rowName}>{label}</span>
+                        {sub !== '' && <span className={css.rowSub}>{sub}</span>}
+                      </span>
+                      <span className={css.rowMeta}>
+                        {signals > 0 && <span className={css.badge} data-tone="warn">{signals}</span>}
+                        <span className={css.time}>{stamp(row.mtime)}</span>
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
             )
           })}
         </div>
